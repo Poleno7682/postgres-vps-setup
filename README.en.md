@@ -45,6 +45,7 @@ The script is **idempotent**: running it again checks what is already installed 
 | Backups | Daily `pg_dump` of every database plus global roles, with rotation |
 | Extras | Swap as OOM insurance, `vm.swappiness=1`, `pg_stat_statements`, interactive menu |
 | Language | Messages in English or Russian, selectable at first run or with `lang` |
+| Interface | Colourful ASCII banner, boxes, install progress, spinner, a separate clean screen for every menu item |
 
 ## Requirements
 
@@ -165,6 +166,14 @@ Running without arguments opens a menu with all actions:
 ```bash
 sudo ./pg_server_setup.sh
 ```
+
+## Terminal interface
+
+- **A separate screen for every item.** Before each action the console is cleared and a banner plus a section title is drawn, so earlier output never gets in the way. After the action the script waits for `Enter` and returns to the menu (so a password stays on screen until you have saved it).
+- **The main menu** is grouped (Server, Databases, Users, IP access, Other) and shows live status: PostgreSQL version and state, port, network mode, database count.
+- **`setup`** shows `[3/8]` steps with a progress bar; package installation runs with a spinner and the verbose `apt` output is shown only on failure.
+- **Boxes and colours:** green — success, yellow — warnings and confirmations, red — errors, cyan — questions.
+- **Automatic plain fallback:** when output is not a terminal (logs, `ssh host cmd | tee`, cron) or `NO_COLOR=1` is set, colours, screen clearing and animation are disabled. With `-y` the screen is never cleared. Terminals without UTF-8 get ASCII boxes and icons.
 
 ## What `setup` does
 
@@ -476,6 +485,7 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 
 | Variable | Value | Default |
 |---|---|---|
+| `NO_COLOR` | any value disables colours | unset |
 | `LANG_UI` | `en` / `ru` (message language) | saved choice; first run asks; without a TTY: from system `$LANG` |
 | `NETWORK_MODE` | `local` / `private` / `public` | interactive choice; without a TTY: `local` |
 | `ACCESS_POLICY` | `list` / `all` (for `public`) | interactive choice |

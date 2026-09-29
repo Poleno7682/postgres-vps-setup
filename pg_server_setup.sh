@@ -102,11 +102,189 @@ all_word() { if [[ "${LANG_UI:-}" == en ]]; then printf 'EVERYONE'; else printf 
 
 default_lang() { if [[ "${LANG:-}" == ru* ]]; then echo ru; else echo en; fi; }
 
-log()  { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
+# ------------------------------------------------------------------ UI ----
+# Colours, icons and boxes are enabled only when stdout is a terminal
+# (and NO_COLOR is unset); pipes and logs stay plain text.
 
+readonly SCRIPT_VERSION="2.0.0"
+UI_ON=0          # stdout is a terminal: colours, icons, spinner
+INTERACTIVE=0    # stdin and stdout are terminals: clear screen, pauses
+UTF=0
+BOX_W=70
+C_RESET=""; C_BOLD=""; C_DIM=""; C_INV=""
+C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""; C_MAGENTA=""; C_CYAN=""
+G1=""; G2=""; G3=""
+I_OK="[+]"; I_WARN="[!]"; I_ERR="[x]"; I_INFO="[i]"; I_Q="?"; I_ARROW=">"; I_DOT="*"
+B_TL="+"; B_TR="+"; B_BL="+"; B_BR="+"; B_H="-"; B_V="|"; B_HH="="
+SPIN=('|' '/' '-' '\')
+BC=""            # colour of the box currently being drawn
+
+ui_init() {
+  local cols ncolors=8
+  if [[ ( -t 1 || "${PGMGR_FORCE_UI:-}" == 1 ) && "${TERM:-dumb}" != dumb ]]; then UI_ON=1; fi
+  if [[ "$UI_ON" == 1 && -t 0 ]]; then INTERACTIVE=1; fi
+  if [[ "$UI_ON" != 1 ]]; then return 0; fi
+
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8*|*utf-8*|*UTF8*|*utf8*) UTF=1 ;;
+  esac
+
+  if [[ -z "${NO_COLOR:-}" ]]; then
+    ncolors="$(tput colors 2>/dev/null || echo 8)"
+    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_INV=$'\033[7m'
+    C_RED=$'\033[1;31m'; C_GREEN=$'\033[1;32m'; C_YELLOW=$'\033[1;33m'
+    C_BLUE=$'\033[1;34m'; C_MAGENTA=$'\033[1;35m'; C_CYAN=$'\033[1;36m'
+    if (( ncolors >= 256 )); then
+      G1=$'\033[1;38;5;27m'; G2=$'\033[1;38;5;33m'; G3=$'\033[1;38;5;39m'
+    else
+      G1="$C_BLUE"; G2="$C_CYAN"; G3="$C_CYAN"
+    fi
+  fi
+
+  if [[ "$UTF" == 1 ]]; then
+    I_OK="✔"; I_WARN="⚠"; I_ERR="✖"; I_INFO="●"; I_Q="›"; I_ARROW="▶"; I_DOT="●"
+    B_TL="╭"; B_TR="╮"; B_BL="╰"; B_BR="╯"; B_H="─"; B_V="│"; B_HH="━"
+    SPIN=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  fi
+
+  cols="$(tput cols 2>/dev/null || echo 80)"
+  BOX_W=$(( cols - 4 ))
+  if (( BOX_W > 84 )); then BOX_W=84; fi
+  if (( BOX_W < 64 )); then BOX_W=64; fi
+}
+
+rep() { # rep CHAR COUNT
+  local s
+  if (( $2 <= 0 )); then return 0; fi
+  printf -v s '%*s' "$2" ''
+  printf '%s' "${s// /$1}"
+}
+
+log()  { printf '  %s%s%s %s\n' "$C_GREEN" "$I_OK" "$C_RESET" "$*"; }
+info() { printf '  %s%s%s %s\n' "$C_CYAN" "$I_INFO" "$C_RESET" "$*"; }
+warn() { printf '  %s%s%s %s\n' "$C_YELLOW" "$I_WARN" "$C_RESET" "$*" >&2; }
+die()  { printf '  %s%s %s%s\n' "$C_RED" "$I_ERR" "$*" "$C_RESET" >&2; exit 1; }
+
+ui_cleanup() { if [[ "$UI_ON" == 1 ]]; then printf '\033[?25h'; fi; }
+trap ui_cleanup EXIT
+trap 'ui_cleanup; printf "\n"; exit 130' INT
 trap 'warn "$(L "Сбой на строке ${LINENO} (команда: ${BASH_COMMAND})" "Failure at line ${LINENO} (command: ${BASH_COMMAND})")"' ERR
+
+clear_screen() {
+  if [[ "$INTERACTIVE" == 1 && "$ASSUME_YES" != 1 ]]; then printf '\033[H\033[2J\033[3J'; fi
+}
+
+section() { # section "Title"
+  local t="$1"
+  printf '\n  %s%s%s %s%s%s %s%s%s\n' "$C_BLUE" "$(rep "$B_HH" 2)" "$C_RESET" "$C_BOLD" "$t" "$C_RESET" \
+    "$C_BLUE" "$(rep "$B_HH" $(( BOX_W - ${#t} - 4 )))" "$C_RESET"
+}
+
+box_top() { # box_top "Title" [colour]
+  local t="$1"
+  BC="${2:-$C_CYAN}"
+  printf '  %s%s%s %s%s%s %s%s%s\n' "$BC" "$B_TL$B_H" "$C_RESET" "$C_BOLD$BC" "$t" "$C_RESET" \
+    "$BC" "$(rep "$B_H" $(( BOX_W - ${#t} - 5 )))$B_TR" "$C_RESET"
+}
+
+box_row() { # box_row "plain text" [colour]
+  local t="$1" c="${2:-}" pad max=$(( BOX_W - 4 ))
+  if (( ${#t} > max )); then t="${t:0:max-1}…"; fi
+  pad=$(( BOX_W - 4 - ${#t} ))
+  if (( pad < 0 )); then pad=0; fi
+  printf '  %s%s%s %s%s%s%*s %s%s%s\n' "$BC" "$B_V" "$C_RESET" "$c" "$t" "$C_RESET" "$pad" "" "$BC" "$B_V" "$C_RESET"
+}
+
+box_kv() { # box_kv "Label" "Value" [value colour]
+  local lab="$1" val="$2" c="${3:-$C_BOLD}" lpad pad max
+  lpad=$(( 16 - ${#lab} ))
+  if (( lpad < 1 )); then lpad=1; fi
+  max=$(( BOX_W - 4 - ${#lab} - lpad ))
+  if (( ${#val} > max )); then val="${val:0:max-1}…"; fi
+  pad=$(( BOX_W - 4 - ${#lab} - lpad - ${#val} ))
+  if (( pad < 0 )); then pad=0; fi
+  printf '  %s%s%s %s%s%s%*s%s%s%s%*s %s%s%s\n' "$BC" "$B_V" "$C_RESET" "$C_DIM" "$lab" "$C_RESET" "$lpad" "" \
+    "$c" "$val" "$C_RESET" "$pad" "" "$BC" "$B_V" "$C_RESET"
+}
+
+box_bottom() {
+  printf '  %s%s%s\n' "$BC" "$B_BL$(rep "$B_H" $(( BOX_W - 2 )))$B_BR" "$C_RESET"
+}
+
+progress_bar() { # progress_bar current total
+  local cur="$1" tot="$2" w=28 filled full empty
+  filled=$(( cur * w / tot ))
+  if [[ "$UTF" == 1 ]]; then full="█"; empty="░"; else full="#"; empty="."; fi
+  printf '%s%s%s%s%s%s %s%d%%%s' "$C_GREEN" "$(rep "$full" "$filled")" "$C_RESET" "$C_DIM" "$(rep "$empty" $(( w - filled )))" \
+    "$C_RESET" "$C_BOLD" $(( cur * 100 / tot )) "$C_RESET"
+}
+
+step_header() { # step_header n total "title"
+  printf '\n  %s%s [%d/%d] %s%s\n  %s\n' "$C_MAGENTA" "$I_ARROW" "$1" "$2" "$3" "$C_RESET" "$(progress_bar "$1" "$2")"
+}
+
+# run_step "message" command args... — command runs in the background with a spinner.
+# Output is kept in a temp file and shown only on failure.
+run_step() {
+  local msg="$1" logf pid rc=0 i=0
+  shift
+  if [[ "$UI_ON" != 1 ]]; then
+    info "$msg"
+    "$@"
+    return $?
+  fi
+  logf="$(mktemp)"
+  "$@" >"$logf" 2>&1 &
+  pid=$!
+  printf '\033[?25l'
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r  %s%s%s %s' "$C_CYAN" "${SPIN[i % ${#SPIN[@]}]}" "$C_RESET" "$msg"
+    i=$(( i + 1 ))
+    sleep 0.1
+  done
+  wait "$pid" || rc=$?
+  printf '\r\033[K\033[?25h'
+  if (( rc == 0 )); then
+    log "$msg"
+  else
+    printf '  %s%s %s%s\n' "$C_RED" "$I_ERR" "$msg" "$C_RESET" >&2
+    tail -n 15 "$logf" | sed 's/^/      /' >&2
+    rm -f "$logf"
+    return "$rc"
+  fi
+  rm -f "$logf"
+}
+
+banner() {
+  local host
+  host="$(hostname 2>/dev/null || echo server)"
+  echo
+  if [[ "$UTF" == 1 ]]; then
+    printf '  %s┏━┓┏━╸  ┏━┓┏━╸╺┳╸╻ ╻┏━┓%s\n' "$G1" "$C_RESET"
+    printf '  %s┣━┛┃╺┓  ┗━┓┣╸  ┃ ┃ ┃┣━┛%s   %sPostgreSQL VPS manager%s\n' "$G2" "$C_RESET" "$C_BOLD" "$C_RESET"
+    printf '  %s╹  ┗━┛  ┗━┛┗━╸ ╹ ┗━┛╹  %s   %sv%s · %s%s\n' "$G3" "$C_RESET" "$C_DIM" "$SCRIPT_VERSION" "$host" "$C_RESET"
+  else
+    printf '  %s== PG SETUP ==%s  PostgreSQL VPS manager\n' "$C_CYAN" "$C_RESET"
+    printf '  %sv%s - %s%s\n' "$C_DIM" "$SCRIPT_VERSION" "$host" "$C_RESET"
+  fi
+  printf '  %s%s%s\n' "$C_DIM" "$(rep "$B_H" "$BOX_W")" "$C_RESET"
+}
+
+screen_begin() { # screen_begin "Title" — clean screen + banner + title bar
+  clear_screen
+  if [[ "$UI_ON" == 1 ]]; then
+    banner
+    printf '\n  %s %s %s\n' "$C_INV$C_CYAN" "$1" "$C_RESET"
+  fi
+}
+
+pause_return() {
+  if [[ "$INTERACTIVE" != 1 ]]; then return 0; fi
+  printf '\n  %s%s%s\n' "$C_DIM" "$(rep "$B_H" "$BOX_W")" "$C_RESET"
+  read -r -p "  $(L "Нажмите Enter, чтобы вернуться в меню…" "Press Enter to return to the menu…")" _ || true
+}
+
+ui_init
 
 require_root() {
   [[ $EUID -eq 0 ]] || die "$(L "Запустите от root: sudo $SELF" "Run as root: sudo $SELF")"
@@ -115,16 +293,16 @@ require_root() {
 ask() { # ask VAR "question" [default]
   local __var="$1" __prompt="$2" __def="${3:-}" __ans=""
   [[ -t 0 ]] || die "$(L "Не хватает аргумента: $__prompt (нет интерактивного ввода)" "Missing argument: $__prompt (no interactive input)")"
-  read -r -p "${__prompt}${__def:+ [$__def]}: " __ans || die "$(L "Ввод прерван" "Input interrupted")"
+  read -r -p "  ${C_CYAN}${I_Q}${C_RESET} ${__prompt}${__def:+ ${C_DIM}[$__def]${C_RESET}}: " __ans || die "$(L "Ввод прерван" "Input interrupted")"
   printf -v "$__var" '%s' "${__ans:-$__def}"
 }
 
 pick() { # pick VAR "title" default_number option1 option2 ... -> VAR = number
   local __var="$1" __title="$2" __def="$3" __i=1 __o __pa=""
   shift 3
-  echo "$__title"
+  printf '\n  %s%s%s\n' "$C_BOLD" "$__title" "$C_RESET"
   for __o in "$@"; do
-    printf '  %d) %s\n' "$__i" "$__o"
+    printf '    %s%2d%s  %s\n' "$C_CYAN" "$__i" "$C_RESET" "$__o"
     __i=$(( __i + 1 ))
   done
   while true; do
@@ -141,7 +319,7 @@ confirm() {
   if [[ "$ASSUME_YES" == 1 ]]; then return 0; fi
   local a=""
   [[ -t 0 ]] || die "$(L "Нужно подтверждение, но нет интерактивного ввода (используйте -y)" "Confirmation required but no interactive input (use -y)")"
-  read -r -p "$1 [y/N] " a || return 1
+  read -r -p "  ${C_YELLOW}?${C_RESET} $1 ${C_DIM}[y/N]${C_RESET} " a || return 1
   [[ "$a" =~ ^[YyДд] ]]
 }
 
@@ -149,7 +327,7 @@ confirm_typed() { # requires typing the word/name in full
   if [[ "$ASSUME_YES" == 1 ]]; then return 0; fi
   local a=""
   [[ -t 0 ]] || die "$(L "Нужно подтверждение, но нет интерактивного ввода (используйте -y)" "Confirmation required but no interactive input (use -y)")"
-  read -r -p "$(L "Для подтверждения введите '$1': " "Type '$1' to confirm: ")" a || return 1
+  read -r -p "  ${C_YELLOW}?${C_RESET} $(L "Для подтверждения введите '${C_BOLD}$1${C_RESET}': " "Type '${C_BOLD}$1${C_RESET}' to confirm: ")" a || return 1
   [[ "$a" == "$1" ]]
 }
 
@@ -259,8 +437,10 @@ init_lang() {
   if [[ -z "$l" ]]; then
     def="$(default_lang)"
     if [[ -t 0 && -t 1 ]]; then
-      echo "Language / Язык:  1) English   2) Русский"
-      read -r -p "[1/2] ($def): " a || a=""
+      clear_screen
+      if [[ "$UI_ON" == 1 ]]; then banner; fi
+      printf '\n  %sLanguage / Язык%s\n    %s1%s  English\n    %s2%s  Русский\n\n' "$C_BOLD" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+      read -r -p "  ${C_CYAN}${I_Q}${C_RESET} [1/2] ($def): " a || a=""
       case "$a" in
         1|en|EN) l=en ;;
         2|ru|RU) l=ru ;;
@@ -410,12 +590,14 @@ resolve_server_role() { # dedicated | shared
 
 print_hw_report() {
   local used=$(( HW_MEM_MB - HW_AVAIL_MB ))
-  echo "$(L "--- Анализ сервера ---" "--- Server analysis ---")"
-  echo "$(L "  CPU:            $HW_CORES ядер" "  CPU:            $HW_CORES cores")"
-  echo "$(L "  RAM:            $(gb "$HW_MEM_MB") ГБ всего, $(gb "$HW_AVAIL_MB") ГБ свободно (занято сейчас: $(gb "$used") ГБ)" "  RAM:            $(gb "$HW_MEM_MB") GB total, $(gb "$HW_AVAIL_MB") GB free (in use now: $(gb "$used") GB)")"
-  echo "$(L "  Swap:           $(gb "$HW_SWAP_MB") ГБ" "  Swap:           $(gb "$HW_SWAP_MB") GB")"
-  echo "$(L "  Диск ($HW_DISK_PATH): $HW_DISK_FREE_GB ГБ свободно из $HW_DISK_TOTAL_GB ГБ" "  Disk ($HW_DISK_PATH): $HW_DISK_FREE_GB GB free of $HW_DISK_TOTAL_GB GB")"
-  echo "$(L "  Тип диска:      $STORAGE (ядро сообщает: $HW_STORAGE_DETECTED; виртуализация: $HW_VIRT)" "  Disk type:      $STORAGE (kernel reports: $HW_STORAGE_DETECTED; virtualization: $HW_VIRT)")"
+  echo
+  box_top "$(L "Анализ сервера" "Server analysis")" "$C_CYAN"
+  box_kv "CPU" "$(L "$HW_CORES ядер" "$HW_CORES cores")"
+  box_kv "RAM" "$(L "$(gb "$HW_MEM_MB") ГБ всего · $(gb "$HW_AVAIL_MB") ГБ свободно · занято $(gb "$used") ГБ" "$(gb "$HW_MEM_MB") GB total · $(gb "$HW_AVAIL_MB") GB free · used $(gb "$used") GB")"
+  box_kv "Swap" "$(L "$(gb "$HW_SWAP_MB") ГБ" "$(gb "$HW_SWAP_MB") GB")"
+  box_kv "$(L "Диск" "Disk")" "$(L "$HW_DISK_FREE_GB ГБ свободно из $HW_DISK_TOTAL_GB ГБ ($HW_DISK_PATH)" "$HW_DISK_FREE_GB GB free of $HW_DISK_TOTAL_GB GB ($HW_DISK_PATH)")"
+  box_kv "$(L "Тип диска" "Disk type")" "$(L "$STORAGE (ядро: $HW_STORAGE_DETECTED; виртуализация: $HW_VIRT)" "$STORAGE (kernel: $HW_STORAGE_DETECTED; virtualization: $HW_VIRT)")"
+  box_bottom
   if (( HW_CORES < 2 )); then warn "$(L "1 ядро: параллельные запросы и автовакуум будут ограничены" "1 core: parallel queries and autovacuum will be limited")"; fi
   if (( HW_MEM_MB < 2000 )); then warn "$(L "RAM меньше 2 ГБ: PostgreSQL будет работать, но на пределе" "Less than 2 GB RAM: PostgreSQL will run, but at its limit")"; fi
   if (( HW_DISK_FREE_GB < 10 )); then warn "$(L "Свободно менее 10 ГБ на диске данных" "Less than 10 GB free on the data disk")"; fi
@@ -832,16 +1014,23 @@ connect_host() {
 }
 
 print_network_summary() {
-  echo "$(L "--- Сеть ---" "--- Network ---")"
-  echo "$(L "  IP подключения: $(connect_host)" "  Connect IP:     $(connect_host)")"
-  echo "$(L "  Режим:          $(state_get NETWORK_MODE)" "  Mode:           $(state_get NETWORK_MODE)")"
-  echo "$(L "  listen:         $(state_get LISTEN_ADDR) (порт $PG_PORT)" "  listen:         $(state_get LISTEN_ADDR) (port $PG_PORT)")"
-  echo "$(L "  Политика:       $(state_get ACCESS_POLICY)" "  Policy:         $(state_get ACCESS_POLICY)")"
-  echo "$(L "  Клиенты:        $(state_get DEFAULT_CIDRS)" "  Clients:        $(state_get DEFAULT_CIDRS)")"
-  if [[ "$(state_get NETWORK_MODE)" == public ]]; then
-    echo "$(L "  SSL:            сертификат по умолчанию самоподписанный: шифрует, но не подтверждает сервер." "  SSL:            the default certificate is self-signed: it encrypts but does not verify the server.")"
-    echo "$(L "                  Для sslmode=verify-full установите свой сертификат (например Let's Encrypt)." "                  For sslmode=verify-full install your own certificate (e.g. Let's Encrypt).")"
+  local mode pcolor="$C_GREEN"
+  mode="$(state_get NETWORK_MODE)"
+  if [[ "$mode" == public ]]; then pcolor="$C_YELLOW"; fi
+  echo
+  box_top "$(L "Сеть" "Network")" "$C_MAGENTA"
+  box_kv "$(L "IP подключения" "Connect IP")" "$(connect_host)" "$C_GREEN$C_BOLD"
+  box_kv "$(L "Порт" "Port")" "$PG_PORT" "$C_GREEN$C_BOLD"
+  box_kv "$(L "Режим" "Mode")" "${mode:-—}" "$pcolor$C_BOLD"
+  box_kv "listen" "$(state_get LISTEN_ADDR)"
+  box_kv "$(L "Политика" "Policy")" "$(state_get ACCESS_POLICY)"
+  box_kv "$(L "Клиенты" "Clients")" "$(state_get DEFAULT_CIDRS)"
+  if [[ "$mode" == public ]]; then
+    box_row "" ""
+    box_row "$(L "SSL: сертификат самоподписанный — шифрует, но не подтверждает сервер." "SSL: self-signed certificate — encrypts, but does not verify the server.")" "$C_DIM"
+    box_row "$(L "Для sslmode=verify-full установите свой (например Let's Encrypt)." "For sslmode=verify-full install your own (e.g. Let's Encrypt).")" "$C_DIM"
   fi
+  box_bottom
 }
 
 # -------------------------------------------- roles, groups, owners ----
@@ -907,16 +1096,16 @@ show_credentials() { # user [db]
   local u="$1" db="${2:-}"
   if [[ -z "$db" ]]; then db="$(user_databases "$u")"; fi
   echo
-  echo "$(L "=================== Данные для подключения ===================" "==================== Connection details ====================")"
-  echo "$(L "  IP:           $(connect_host)" "  IP:           $(connect_host)")"
-  echo "$(L "  Порт:         $PG_PORT" "  Port:         $PG_PORT")"
-  echo "$(L "  Название БД:  $db" "  Database:     $db")"
-  echo "$(L "  Логин:        $u" "  Login:        $u")"
-  echo "$(L "  Пароль:       $CREATED_PASSWORD" "  Password:     $CREATED_PASSWORD")"
-  echo "  SSL:          sslmode=require"
-  echo "--------------------------------------------------------------"
-  echo "$(L "  Пароль показан один раз — сохраните его сейчас." "  The password is shown only once — save it now.")"
-  echo "=============================================================="
+  box_top "$(L "Данные для подключения" "Connection details")" "$C_GREEN"
+  box_kv "IP" "$(connect_host)"
+  box_kv "$(L "Порт" "Port")" "$PG_PORT"
+  box_kv "$(L "Название БД" "Database")" "$db"
+  box_kv "$(L "Логин" "Login")" "$u"
+  box_kv "$(L "Пароль" "Password")" "$CREATED_PASSWORD" "$C_YELLOW$C_BOLD"
+  box_kv "SSL" "sslmode=require"
+  box_row "" ""
+  box_row "$(L "Пароль показан один раз — сохраните его сейчас." "The password is shown only once — save it now.")" "$C_YELLOW"
+  box_bottom
   echo
   CREATED_PASSWORD=""
   PASSWORD_INPUT=""
@@ -1010,11 +1199,13 @@ apply_profile() { # apply_profile db user profile
 
 install_postgres() {
   export DEBIAN_FRONTEND=noninteractive
-  log "$(L "Устанавливаю PostgreSQL ${PG_VERSION} из репозитория PGDG" "Installing PostgreSQL ${PG_VERSION} from the PGDG repository")"
-  apt-get update -qq
-  apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl postgresql-common
-  /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-  apt-get install -y -qq "postgresql-${PG_VERSION}"
+  run_step "$(L "Обновляю индекс пакетов" "Updating the package index")" apt-get update -qq
+  run_step "$(L "Устанавливаю зависимости" "Installing prerequisites")" \
+    apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl postgresql-common
+  run_step "$(L "Подключаю репозиторий PGDG" "Adding the PGDG repository")" \
+    /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+  run_step "$(L "Устанавливаю PostgreSQL ${PG_VERSION}" "Installing PostgreSQL ${PG_VERSION}")" \
+    apt-get install -y -qq "postgresql-${PG_VERSION}"
 }
 
 # Parameter calculation for this server (cores, RAM, disk type, role, network).
@@ -1201,9 +1392,12 @@ cmd_analyze() {
 }
 
 cmd_setup() {
+  local total=8
   require_root
+  step_header 1 "$total" "$(L "Анализ сервера" "Server analysis")"
   cmd_analyze
 
+  step_header 2 "$total" "$(L "Установка и запуск PostgreSQL" "PostgreSQL installation and startup")"
   detect_cluster
   if [[ -n "$PG_VER" ]]; then
     log "$(L "PostgreSQL ${PG_VER} (кластер ${PG_CLUSTER}, порт ${PG_PORT}) уже установлен" "PostgreSQL ${PG_VER} (cluster ${PG_CLUSTER}, port ${PG_PORT}) is already installed")"
@@ -1222,15 +1416,21 @@ cmd_setup() {
   fi
   wait_ready
 
+  step_header 3 "$total" "$(L "Сеть и доступ" "Network and access")"
   select_network 0
+  step_header 4 "$total" "$(L "Порт" "Port")"
   select_port 0
   step_port_config
+  step_header 5 "$total" "$(L "Настройка под ваш сервер" "Tuning for your server")"
   step_tuning
   step_port_finish
+  step_header 6 "$total" "$(L "Защита, swap" "Hardening and swap")"
   step_harden
   step_swap_sysctl
+  step_header 7 "$total" "$(L "Резервные копии" "Backups")"
   step_backup
 
+  step_header 8 "$total" "$(L "Файрвол и итоги" "Firewall and summary")"
   if ! ufw_active; then
     warn "$(L "Файрвол ufw не активен." "The ufw firewall is not active.")"
     if [[ -t 0 && "$ASSUME_YES" != 1 ]]; then
@@ -1241,7 +1441,11 @@ cmd_setup() {
   fi
 
   print_network_summary
-  log "$(L "Сервер PostgreSQL настроен." "The PostgreSQL server is set up.")"
+  echo
+  box_top "$(L "Готово" "Done")" "$C_GREEN"
+  box_row "$(L "Сервер PostgreSQL настроен и запущен." "The PostgreSQL server is set up and running.")" "$C_GREEN$C_BOLD"
+  box_row "$(L "Управление БД и пользователями: sudo $SELF" "Manage databases and users: sudo $SELF")" "$C_DIM"
+  box_bottom
 
   if [[ -t 0 && "$ASSUME_YES" != 1 ]] \
      && [[ "$(psql_val "SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'")" == 0 ]]; then
@@ -1508,13 +1712,13 @@ cmd_access_del() {
 
 cmd_list() {
   ensure_running
-  echo "$(L "--- Базы данных ---" "--- Databases ---")"
+  section "$(L "Базы данных" "Databases")"
   psql_admin -d postgres -c "SELECT d.datname AS db, pg_get_userbyid(d.datdba) AS owner, pg_size_pretty(pg_database_size(d.datname)) AS size FROM pg_database d WHERE NOT d.datistemplate ORDER BY 1"
-  echo "$(L "--- Пользователи ---" "--- Users ---")"
+  section "$(L "Пользователи" "Users")"
   psql_admin -d postgres -c "SELECT rolname AS \"user\", rolcanlogin AS login, rolconnlimit AS conn_limit, rolsuper AS super FROM pg_roles WHERE rolname !~ '^pg_' AND rolname !~ '_(rw|ro)\$' ORDER BY 1"
-  echo "$(L "--- Профили (пользователь -> БД) ---" "--- Profiles (user -> database) ---")"
+  section "$(L "Профили (пользователь -> БД)" "Profiles (user -> database)")"
   psql_admin -d postgres -c "SELECT m.rolname AS \"user\", regexp_replace(g.rolname, '_(rw|ro)\$', '') AS db, CASE WHEN g.rolname ~ '_rw\$' THEN 'readwrite' ELSE 'readonly' END AS profile FROM pg_auth_members am JOIN pg_roles g ON g.oid = am.roleid JOIN pg_roles m ON m.oid = am.member WHERE g.rolname ~ '_(rw|ro)\$' AND EXISTS (SELECT 1 FROM pg_database d WHERE d.datname = regexp_replace(g.rolname, '_(rw|ro)\$', '')) UNION ALL SELECT pg_get_userbyid(datdba), datname, 'owner' FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY 2, 1"
-  echo "$(L "--- Правила удалённого доступа (pg_hba, управляются скриптом) ---" "--- Remote access rules (pg_hba, managed by the script) ---")"
+  section "$(L "Правила удалённого доступа (pg_hba, управляются скриптом)" "Remote access rules (pg_hba, managed by the script)")"
   grep "# ${TAG}:" "$(hba_file)" || echo "$(L "(нет)" "(none)")"
   print_network_summary
 }
@@ -1525,7 +1729,7 @@ cmd_status() {
     warn "$(L "PostgreSQL не установлен. Выполните: $SELF setup" "PostgreSQL is not installed. Run: $SELF setup")"
     return 0
   fi
-  echo "$(L "--- Сервис ---" "--- Service ---")"
+  section "$(L "Сервис" "Service")"
   pg_lsclusters
   if systemctl is-active --quiet "$SVC"; then
     log "$SVC: active"
@@ -1537,9 +1741,9 @@ cmd_status() {
   analyze_hardware
   print_hw_report
   print_network_summary
-  echo "$(L "--- Последний бэкап ---" "--- Last backup ---")"
-  find "$BACKUP_DIR" -name '*.dump' -printf '%TY-%Tm-%Td %TH:%TM  %p\n' 2>/dev/null | sort | tail -n1 || true
-  if ufw_active; then echo "$(L "--- ufw: активен ---" "--- ufw: active ---")"; else echo "$(L "--- ufw: не активен ---" "--- ufw: not active ---")"; fi
+  section "$(L "Бэкап и файрвол" "Backup and firewall")"
+  find "$BACKUP_DIR" -name '*.dump' -printf '%TY-%Tm-%Td %TH:%TM  %p\n' 2>/dev/null | sort | tail -n1 | sed 's/^/  /' || true
+  if ufw_active; then log "$(L "ufw: активен" "ufw: active")"; else warn "$(L "ufw: не активен" "ufw: not active")"; fi
 }
 
 cmd_backup_now() {
@@ -1619,95 +1823,129 @@ EOF
   fi
 }
 
-print_menu() {
-  if [[ "${LANG_UI:-}" == en ]]; then
-    cat <<'EOF'
+# Menu definition. Group rows: "#|Русская группа|English group".
+# Item rows: "number|command|Русский текст|English text".
+MENU_DEF=(
+  "#|Сервер|Server"
+  "1|setup|Первичная настройка / проверка|Initial setup / re-check"
+  "2|status|Статус сервера|Server status"
+  "3|list|БД, пользователи, профили|Databases, users, profiles"
+  "4|analyze|Анализ сервера (ядра, RAM, диск)|Server analysis (cores, RAM, disk)"
+  "5|network|Режим сети (local / private / public)|Network mode (local / private / public)"
+  "6|port|Порт PostgreSQL|PostgreSQL port"
+  "7|firewall-init|Файрвол ufw|Firewall (ufw)"
+  "8|backup-now|Бэкап сейчас|Backup now"
+  "#|Базы данных|Databases"
+  "9|db-create|Создать БД|Create database"
+  "10|db-drop|Удалить БД|Drop database"
+  "11|db-rename|Переименовать БД|Rename database"
+  "12|db-chown|Сменить владельца БД|Change database owner"
+  "#|Пользователи|Users"
+  "13|user-create|Создать пользователя|Create user"
+  "14|user-role|Изменить профиль на БД|Change profile on a database"
+  "15|user-passwd|Сменить пароль|Change password"
+  "16|user-rename|Переименовать пользователя|Rename user"
+  "17|user-limit|Лимит подключений|Connection limit"
+  "18|user-drop|Удалить пользователя|Drop user"
+  "#|Доступ по IP|IP access"
+  "19|access-add|Добавить IP-доступ|Add IP access"
+  "20|access-del|Убрать IP-доступ|Remove IP access"
+  "#|Прочее|Other"
+  "21|lang|Язык сообщений (en / ru)|Message language (en / ru)"
+)
 
-========== PostgreSQL: administration ==========
-  1) Initial setup / re-check (setup)
-  2) Status
-  3) List databases, users, profiles
-  4) Server analysis (cores, RAM, disk)
-  5) Change network mode (local / private / public)
-  6) Create database
-  7) Drop database
-  8) Rename database
-  9) Change database owner
- 10) Create user
- 11) Change a user's profile on a database
- 12) Change a user's password
- 13) Rename user
- 14) User connection limit
- 15) Drop user
- 16) Add IP access
- 17) Remove IP access
- 18) Backup now
- 19) Enable firewall (ufw)
- 20) Change PostgreSQL port
- 21) Message language (en / ru)
-  0) Exit
-EOF
+menu_status_box() {
+  local state color="$C_CYAN" dbs=""
+  detect_cluster
+  if [[ -z "$PG_VER" ]]; then
+    state="$(L "не установлен" "not installed")"; color="$C_RED"
+  elif systemctl is-active --quiet "$SVC"; then
+    state="$(L "работает" "running")"; color="$C_GREEN"
+    dbs="$(psql_val "SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'" 2>/dev/null || true)"
   else
-    cat <<'EOF'
-
-========== PostgreSQL: администрирование ==========
-  1) Первичная настройка / проверка (setup)
-  2) Статус
-  3) Список БД, пользователей, профилей
-  4) Анализ сервера (ядра, RAM, диск)
-  5) Сменить режим сети (local / private / public)
-  6) Создать БД
-  7) Удалить БД
-  8) Переименовать БД
-  9) Сменить владельца БД
- 10) Создать пользователя
- 11) Изменить профиль пользователя на БД
- 12) Сменить пароль пользователя
- 13) Переименовать пользователя
- 14) Лимит подключений пользователя
- 15) Удалить пользователя
- 16) Добавить IP-доступ
- 17) Убрать IP-доступ
- 18) Бэкап сейчас
- 19) Включить файрвол (ufw)
- 20) Сменить порт PostgreSQL
- 21) Язык сообщений (en / ru)
-  0) Выход
-EOF
+    state="$(L "остановлен" "stopped")"; color="$C_YELLOW"
   fi
+  box_top "$(L "Состояние" "Status")" "$C_CYAN"
+  box_kv "PostgreSQL" "${PG_VER:+$PG_VER · }$state" "$color$C_BOLD"
+  if [[ -n "$PG_VER" ]]; then
+    box_kv "$(L "Порт" "Port")" "$PG_PORT"
+    box_kv "$(L "Сеть" "Network")" "$(state_get NETWORK_MODE) · $(connect_host)"
+    box_kv "$(L "Базы данных" "Databases")" "${dbs:-0}"
+  fi
+  box_kv "$(L "Язык" "Language")" "$LANG_UI"
+  box_bottom
+}
+
+render_menu() {
+  local row num cmd ru en
+  declare -gA MENU_CMDS=()
+  screen_begin "$(L "Главное меню" "Main menu")"
+  echo
+  menu_status_box
+  for row in "${MENU_DEF[@]}"; do
+    IFS='|' read -r num cmd ru en <<<"$row"
+    if [[ "$num" == "#" ]]; then
+      section "$(L "$cmd" "$ru")"
+    else
+      MENU_CMDS["$num"]="$cmd"
+      printf '    %s%3s%s  %s\n' "$C_CYAN$C_BOLD" "$num" "$C_RESET" "$(L "$ru" "$en")"
+    fi
+  done
+  printf '\n    %s%3s%s  %s\n' "$C_RED$C_BOLD" "0" "$C_RESET" "$(L "Выход" "Exit")"
 }
 
 menu() {
-  local choice
+  local choice cmd
   while true; do
-    print_menu
-    read -r -p "$(L "Выбор: " "Choice: ")" choice || return 0
+    render_menu
+    echo
+    read -r -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Выберите пункт" "Choose an item") ${C_DIM}[0-21]${C_RESET}: " choice || break
+    if [[ -z "$choice" ]]; then continue; fi
     case "$choice" in
-      1) "$SELF" setup || true ;;
-      2) "$SELF" status || true ;;
-      3) "$SELF" list || true ;;
-      4) "$SELF" analyze || true ;;
-      5) "$SELF" network || true ;;
-      6) "$SELF" db-create || true ;;
-      7) "$SELF" db-drop || true ;;
-      8) "$SELF" db-rename || true ;;
-      9) "$SELF" db-chown || true ;;
-      10) "$SELF" user-create || true ;;
-      11) "$SELF" user-role || true ;;
-      12) "$SELF" user-passwd || true ;;
-      13) "$SELF" user-rename || true ;;
-      14) "$SELF" user-limit || true ;;
-      15) "$SELF" user-drop || true ;;
-      16) "$SELF" access-add || true ;;
-      17) "$SELF" access-del || true ;;
-      18) "$SELF" backup-now || true ;;
-      19) "$SELF" firewall-init || true ;;
-      20) "$SELF" port || true ;;
-      21) "$SELF" lang || true; LANG_UI="$(state_get LANG_UI)"; LANG_UI="${LANG_UI:-$(default_lang)}" ;;
-      0|q|Q) return 0 ;;
-      *) warn "$(L "Неизвестный пункт" "Unknown item")" ;;
+      0|q|Q|exit) break ;;
     esac
+    cmd="${MENU_CMDS[$choice]:-}"
+    if [[ -z "$cmd" ]]; then
+      warn "$(L "Неизвестный пункт: $choice" "Unknown item: $choice")"
+      sleep 1
+      continue
+    fi
+    "$SELF" "$cmd" || true
+    if [[ "$cmd" == lang ]]; then
+      LANG_UI="$(state_get LANG_UI)"
+      LANG_UI="${LANG_UI:-$(default_lang)}"
+    fi
+    pause_return
   done
+  clear_screen
+  log "$(L "До свидания!" "Goodbye!")"
+}
+
+cmd_title() { # screen title for a command
+  case "$1" in
+    setup)         L "Первичная настройка" "Initial setup" ;;
+    status)        L "Статус сервера" "Server status" ;;
+    list)          L "БД, пользователи, профили" "Databases, users, profiles" ;;
+    analyze)       L "Анализ сервера" "Server analysis" ;;
+    network)       L "Режим сети" "Network mode" ;;
+    port)          L "Порт PostgreSQL" "PostgreSQL port" ;;
+    firewall-init) L "Файрвол ufw" "Firewall (ufw)" ;;
+    backup-now)    L "Резервная копия" "Backup" ;;
+    db-create)     L "Создание БД" "Create database" ;;
+    db-drop)       L "Удаление БД" "Drop database" ;;
+    db-rename)     L "Переименование БД" "Rename database" ;;
+    db-chown)      L "Смена владельца БД" "Change database owner" ;;
+    user-create)   L "Создание пользователя" "Create user" ;;
+    user-role)     L "Профиль пользователя на БД" "User profile on a database" ;;
+    user-passwd)   L "Смена пароля" "Change password" ;;
+    user-rename)   L "Переименование пользователя" "Rename user" ;;
+    user-limit)    L "Лимит подключений" "Connection limit" ;;
+    user-drop)     L "Удаление пользователя" "Drop user" ;;
+    access-add)    L "Добавить IP-доступ" "Add IP access" ;;
+    access-del)    L "Убрать IP-доступ" "Remove IP access" ;;
+    lang)          L "Язык сообщений" "Message language" ;;
+    *)             printf '%s' "$1" ;;
+  esac
 }
 
 main() {
@@ -1726,6 +1964,10 @@ main() {
   if [[ $# -gt 0 ]]; then shift; fi
   require_root
   init_lang
+  case "$cmd" in
+    menu|help|usage) ;;
+    *) screen_begin "$(cmd_title "$cmd")" ;;
+  esac
   case "$cmd" in
     menu)          menu ;;
     setup)         cmd_setup "$@" ;;
