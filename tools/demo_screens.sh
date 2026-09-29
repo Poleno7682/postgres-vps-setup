@@ -29,6 +29,8 @@ state_get() {
     DEFAULT_CIDRS) echo "203.0.113.10/32,198.51.100.0/24" ;;
     LANG_UI)       echo "$LANG_CHOICE" ;;
     SETUP_LAST_STEP) echo 5 ;;
+    EXTERNAL_PORT) echo 37412 ;;
+    NAT_PROTO)     echo tcp ;;
   esac
 }
 PG_PORT=5432
@@ -38,7 +40,9 @@ HW_STORAGE_DETECTED=ssd; HW_VIRT=kvm; STORAGE=ssd
 
 screen_menu() {
   render_menu
-  printf '\n  %s%s%s %s %s[0-21]%s: 13\n' "$C_CYAN" "$I_Q" "$C_RESET" "$(L "Выберите пункт" "Choose an item")" "$C_DIM" "$C_RESET"
+  printf '
+  %s%s%s %s %s[0-%s]%s: 14
+' "$C_CYAN" "$I_Q" "$C_RESET" "$(L "Выберите пункт" "Choose an item")" "$C_DIM" "$MENU_MAX" "$C_RESET"
 }
 
 screen_setup() {
