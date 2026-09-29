@@ -68,7 +68,7 @@ The script is **idempotent**: running it again checks what is already installed 
 </tr>
 <tr>
 <td width="50%" valign="top"><b>🌐 Network your way</b><br><code>local</code>, <code>private</code> (VPN/VPC) or <code>public</code> (IP allowlist or everyone). Port: 5432, custom or a random free one.</td>
-<td width="50%" valign="top"><b>📡 Servers behind NAT</b><br>The provider-assigned external port and forwarding type (TCP/UDP) in the connection details, with hints on why PostgreSQL needs TCP.</td>
+<td width="50%" valign="top"><b>📡 Servers behind NAT</b><br>The provider-assigned external port in the connection details and URL. Reminder: PostgreSQL works over TCP only.</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><b>🗄️ A database per project</b><br>A dedicated database and permissions per project; tables never overlap. Profiles: <code>owner</code>, <code>readwrite</code>, <code>readonly</code>.</td>
@@ -162,7 +162,7 @@ Step by step, the script will:
 1. show a server analysis (cores, RAM, disk);
 2. install PostgreSQL (if not installed yet);
 3. ask for the **network mode** (`local` / `private` / `public`) and the IPs allowed to connect;
-4. ask for the PostgreSQL **port** (standard 5432, custom, or a random free one) and whether the server is **behind NAT** with port forwarding (external port and forwarding type);
+4. ask for the PostgreSQL **port** (standard 5432, custom, or a random free one) and whether the server is **behind NAT** with port forwarding (external port);
 5. tune PostgreSQL for your hardware and restart the service;
 6. configure swap and backups, and offer to enable the `ufw` firewall;
 7. offer to create the first database and its owner right away and print the connection details (IP, port, database, login, password).
@@ -336,16 +336,13 @@ For all new connections use `psql -p <port> ...` and `host:port` in URLs. `pg_hb
 
 ## NAT, external port and protocol
 
-If the server is behind NAT and the provider forwards a port, **you often cannot choose the external port** (the provider assigns it), but you can read it in the panel. After the port question the script asks:
-
-1. **Is the server behind NAT with port forwarding?** If yes, enter the **external port** (as shown in the provider's panel).
-2. **Forwarding type at the provider:** TCP (recommended), UDP or TCP+UDP.
+If the server is behind NAT and the provider forwards a port, **you often cannot choose the external port** (the provider assigns it), but you can read it in the panel. After the port question the script asks: **is the server behind NAT with port forwarding?** If yes, enter the **external port** (as shown in the provider's panel).
 
 The external port is used **for display only**: it appears in the "Connection details", in the copy-paste block and in the connection URL (`...@IP:external_port/...`). `ufw` and `pg_hba.conf` work with PostgreSQL's internal port, because NAT forwards the traffic to it.
 
 Change the external port later (for example, when the provider assigns a new one): `sudo ./pg_server_setup.sh nat 37412`, or `nat none` to turn it off.
 
-**TCP or UDP.** PostgreSQL works **over TCP only** (the protocol does not support UDP), so the connection details always show `Protocol: TCP` and the status checks that the port really listens over TCP. If the provider's forward is **UDP-only**, PostgreSQL will not work through it: enable a TCP forward (or TCP+UDP; UDP is simply unused), or connect through a WireGuard/Tailscale tunnel (it runs over UDP) in the `private` mode. The script warns you when UDP is chosen.
+**TCP or UDP.** PostgreSQL works **over TCP only** (the protocol does not support UDP), so the connection details always show `Protocol: TCP` and the status checks that the port really listens over TCP. So create a forward of type **TCP** in the provider's panel: PostgreSQL will not work through a **UDP-only** forward (if UDP is all the provider offers, use a WireGuard/Tailscale tunnel — it runs over UDP — in the `private` mode). The script reminds you of this when you enter the external port.
 
 ## Isolation model and roles
 
@@ -395,7 +392,7 @@ Arguments you do not pass are requested interactively. The `-y` flag disables co
 | `analyze` | Report on cores, RAM, disk |
 | `network` | Change the network mode (`local` / `private` / `public`) |
 | `port [N\|default\|random]` | Change the PostgreSQL port: 5432, custom, or random free |
-| `nat [external_port\|none]` | Server behind NAT: set the external port and forwarding type (TCP/UDP) |
+| `nat [external_port\|none]` | Server behind NAT: set the external port shown to clients |
 | `lang [en\|ru]` | Set the language of the script's messages |
 | `status` | Service, resources, network, last backup |
 | `list` | Databases, users, profiles, access rules |
@@ -587,7 +584,6 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 | `ALLOWED_CIDR` | comma-separated client IPs/CIDRs | interface subnet (for `private`) |
 | `DB_PORT` | `default` (5432) / `random` / a number 1024–65535 | interactive choice; without a TTY: current port |
 | `EXTERNAL_PORT` | external NAT port (number 1–65535) or `none` | interactive question; without a TTY: saved value |
-| `NAT_PROTO` | `tcp` / `udp` / `both`: forwarding type at the provider | `tcp` |
 | `SERVER_ROLE` | `dedicated` / `shared` | `dedicated` |
 | `PG_VERSION` | PostgreSQL major version | `17` |
 | `MAX_CONNECTIONS` | number | auto-calculated |
@@ -703,7 +699,7 @@ Yes, that is the main purpose of the script. Every project gets its own database
 <details>
 <summary><b>How do I change the port, network mode or external port later?</b></summary>
 
-`sudo ./pg_server_setup.sh port` (port), `network` (mode and IP list), `nat` (external port and forwarding type). `ufw` rules and the backup script are updated automatically when the port changes.
+`sudo ./pg_server_setup.sh port` (port), `network` (mode and IP list), `nat` (external port). `ufw` rules and the backup script are updated automatically when the port changes.
 
 </details>
 

@@ -30,7 +30,6 @@ state_get() {
     LANG_UI)       echo "$LANG_CHOICE" ;;
     SETUP_LAST_STEP) echo 5 ;;
     EXTERNAL_PORT) echo 37412 ;;
-    NAT_PROTO)     echo tcp ;;
   esac
 }
 PG_PORT=5432

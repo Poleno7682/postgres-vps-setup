@@ -38,7 +38,7 @@
 #   ACCESS_POLICY=list|all (public)     LISTEN_ADDR=10.0.0.5[,IP2] | '*'
 #   ALLOWED_CIDR=203.0.113.10,198.51.100.0/24
 #   DB_PORT=default|random|<number>     SERVER_ROLE=dedicated|shared
-#   EXTERNAL_PORT=<number>|none         NAT_PROTO=tcp|udp|both   (server behind NAT)
+#   EXTERNAL_PORT=<number>|none         (server behind NAT: external port for clients)
 #   PG_VERSION=17  MAX_CONNECTIONS=<N>  STORAGE=ssd|hdd  SWAP_GB=2
 #   BACKUP_DIR=/var/backups/postgresql  BACKUP_RETENTION_DAYS=14
 #   PGMGR_PASSWORD=...  (ready-made password for the created/changed user)
@@ -89,7 +89,6 @@ IP_CANDS=()
 # Port selection (select_port / step_port_config)
 DB_PORT="${DB_PORT:-}"
 EXTERNAL_PORT="${EXTERNAL_PORT:-}"   # external (NAT) port shown to clients
-NAT_PROTO="${NAT_PROTO:-}"           # forwarding type set at the provider: tcp|udp|both
 DESIRED_PORT=""
 PORT_OLD=""
 PORT_CHANGED=0
@@ -1043,18 +1042,17 @@ proto_value() {
 }
 
 # NAT / port forwarding: the external port assigned by the provider (read-only for
-# you, but visible in its panel) and the forwarding type. Only affects what is
-# shown in the connection details — the firewall and pg_hba use the real port.
+# you, but visible in its panel). Only affects what is shown in the connection
+# details — the firewall and pg_hba use the real port.
 select_nat() { # select_nat [force=0]
-  local force="${1:-0}" ext="${EXTERNAL_PORT:-}" proto="${NAT_PROTO:-}" asked cur idx=1 def=1
+  local force="${1:-0}" ext="${EXTERNAL_PORT:-}" asked cur idx=1 def=1
   asked="$(state_get NAT_ASKED)"
   cur="$(state_get EXTERNAL_PORT)"
 
-  if [[ -z "$ext" && -z "$proto" && -n "$asked" && "$force" != 1 ]]; then
+  if [[ -z "$ext" && -n "$asked" && "$force" != 1 ]]; then
     EXTERNAL_PORT="$cur"
-    NAT_PROTO="$(state_get NAT_PROTO)"
     if [[ -n "$cur" ]]; then
-      skip "$(L "NAT (из сохранённых настроек): внешний порт $cur -> $PG_PORT, проброс ${NAT_PROTO:-tcp}" "NAT (from saved settings): external port $cur -> $PG_PORT, forwarding ${NAT_PROTO:-tcp}")"
+      skip "$(L "NAT (из сохранённых настроек): внешний порт $cur -> $PG_PORT" "NAT (from saved settings): external port $cur -> $PG_PORT")"
     else
       skip "$(L "NAT: сервер доступен напрямую (внешний порт = внутренний)" "NAT: the server is reachable directly (external port = internal port)")"
     fi
@@ -1065,8 +1063,8 @@ select_nat() { # select_nat [force=0]
     if [[ -t 0 ]]; then
       if [[ -n "$cur" ]]; then def=2; fi
       pick idx "$(L "Сервер за NAT с пробросом порта?" "Is the server behind NAT with port forwarding?")" "$def" \
-        "$(L "Нет — клиенты подключаются напрямую, внешний порт = внутренний" "No — clients connect directly, external port = internal port")" \
-        "$(L "Да — внешний порт назначает провайдер/роутер, его нужно показывать в данных подключения" "Yes — the provider/router assigns the external port, show it in the connection details")"
+        "$(L "Нет — внешний порт совпадает с внутренним" "No — the external port equals the internal port")" \
+        "$(L "Да — внешний порт назначен провайдером" "Yes — the provider assigned an external port")"
       if (( idx == 2 )); then
         info "$(L "Примечание: PostgreSQL использует соединение TCP (UDP не поддерживает) — в панели провайдера нужен проброс типа TCP." "Note: PostgreSQL uses a TCP connection (UDP is not supported) — the provider's port forward must be of type TCP.")"
         ask ext "$(L "Внешний порт (посмотрите в панели провайдера)" "External port (see your provider's panel)")" "$cur"
@@ -1085,36 +1083,13 @@ select_nat() { # select_nat [force=0]
     if ! [[ "$ext" =~ ^[0-9]+$ ]] || (( ext < 1 || ext > 65535 )); then
       die "$(L "Внешний порт должен быть числом 1-65535: '$ext'" "The external port must be a number 1-65535: '$ext'")"
     fi
-    if [[ -z "$proto" ]]; then
-      if [[ -t 0 ]]; then
-        pick idx "$(L "Тип проброса у провайдера/роутера:" "Forwarding type at the provider/router:")" 1 \
-          "TCP — $(L "рекомендуется: PostgreSQL работает по TCP" "recommended: PostgreSQL works over TCP")" \
-          "UDP" \
-          "TCP + UDP"
-        case "$idx" in 1) proto=tcp ;; 2) proto=udp ;; 3) proto=both ;; esac
-      else
-        proto="$(state_get NAT_PROTO)"
-        proto="${proto:-tcp}"
-      fi
-    fi
-    case "$proto" in
-      tcp|udp|both) ;;
-      *) die "$(L "NAT_PROTO должен быть tcp, udp или both" "NAT_PROTO must be tcp, udp or both")" ;;
-    esac
-    if [[ "$proto" == udp ]]; then
-      warn "$(L "PostgreSQL работает только по TCP: проброс только UDP не подойдёт. Нужен проброс TCP либо туннель (WireGuard/Tailscale идут по UDP) и режим private." "PostgreSQL works over TCP only: a UDP-only forward will not work. Use a TCP forward, or a tunnel (WireGuard/Tailscale run over UDP) together with the private mode.")"
-    fi
-  else
-    proto=""
   fi
 
   EXTERNAL_PORT="$ext"
-  NAT_PROTO="$proto"
   state_set EXTERNAL_PORT "$ext"
-  state_set NAT_PROTO "$proto"
   state_set NAT_ASKED yes
   if [[ -n "$ext" ]]; then
-    log "$(L "NAT: внешний порт $ext -> внутренний $PG_PORT, проброс $proto" "NAT: external port $ext -> internal $PG_PORT, forwarding $proto")"
+    log "$(L "NAT: внешний порт $ext -> внутренний $PG_PORT" "NAT: external port $ext -> internal $PG_PORT")"
   else
     log "$(L "NAT: сервер доступен напрямую (внешний порт = внутренний)" "NAT: the server is reachable directly (external port = internal port)")"
   fi
@@ -1197,10 +1172,9 @@ ensure_connect_host() {
 }
 
 print_network_summary() {
-  local mode pcolor="$C_GREEN" cport ext nat
+  local mode pcolor="$C_GREEN" cport ext
   mode="$(state_get NETWORK_MODE)"
   ext="$(state_get EXTERNAL_PORT)"
-  nat="$(state_get NAT_PROTO)"
   cport="$(client_port)"
   if [[ "$mode" == public ]]; then pcolor="$C_YELLOW"; fi
   echo
@@ -1209,17 +1183,13 @@ print_network_summary() {
   box_kv "$(L "Порт клиента" "Client port")" "$cport" "$C_GREEN$C_BOLD"
   if [[ -n "$ext" ]]; then
     box_kv "$(L "Внутренний порт" "Internal port")" "$PG_PORT"
-    box_kv "NAT" "$(L "внешний $ext -> внутренний $PG_PORT, проброс ${nat:-tcp}" "external $ext -> internal $PG_PORT, forwarding ${nat:-tcp}")"
+    box_kv "NAT" "$(L "внешний $ext -> внутренний $PG_PORT" "external $ext -> internal $PG_PORT")"
   fi
   box_kv "$(L "Протокол" "Protocol")" "$(proto_value)" "$C_GREEN$C_BOLD"
   box_kv "$(L "Режим" "Mode")" "${mode:-—}" "$pcolor$C_BOLD"
   box_kv "listen" "$(state_get LISTEN_ADDR)"
   box_kv "$(L "Политика" "Policy")" "$(state_get ACCESS_POLICY)"
   box_kv "$(L "Клиенты" "Clients")" "$(state_get DEFAULT_CIDRS)"
-  if [[ "$nat" == udp ]]; then
-    box_row "" ""
-    box_row "$(L "Внимание: PostgreSQL работает только по TCP, проброс UDP не подойдёт." "Warning: PostgreSQL works over TCP only, a UDP forward will not work.")" "$C_YELLOW"
-  fi
   if [[ "$mode" == public ]]; then
     box_row "" ""
     box_row "$(L "SSL: сертификат самоподписанный — шифрует, но не подтверждает сервер." "SSL: self-signed certificate — encrypts, but does not verify the server.")" "$C_DIM"
@@ -1311,11 +1281,10 @@ user_databases() {
 # wiped from the script's memory and never printed again.
 show_credentials() { # user [db]
   [[ -n "$CREATED_PASSWORD" ]] || return 0
-  local u="$1" db="${2:-}" host db1 url cport port_disp nat
+  local u="$1" db="${2:-}" host db1 url cport port_disp
   if [[ -z "$db" ]]; then db="$(user_databases "$u")"; fi
   host="$(connect_host)"
   cport="$(client_port)"
-  nat="$(state_get NAT_PROTO)"
   port_disp="$cport"
   if [[ "$cport" != "$PG_PORT" ]]; then
     port_disp="$cport ($(L "внутренний" "internal"): $PG_PORT)"
@@ -1329,11 +1298,6 @@ show_credentials() { # user [db]
   box_kv "$(L "Логин" "Login")" "$u"
   box_kv "$(L "Пароль" "Password")" "$CREATED_PASSWORD" "$C_YELLOW$C_BOLD"
   box_kv "SSL" "sslmode=require"
-  if [[ "$nat" == udp ]]; then
-    box_row "$(L "Внимание: PostgreSQL работает только по TCP — проброс UDP не подойдёт." "Warning: PostgreSQL works over TCP only — a UDP forward will not work.")" "$C_YELLOW"
-  elif [[ "$nat" == both ]]; then
-    box_row "$(L "Проброс TCP+UDP: PostgreSQL использует только TCP." "TCP+UDP forwarding: PostgreSQL uses TCP only.")" "$C_DIM"
-  fi
   box_row "" ""
   box_row "$(L "Пароль показан один раз — сохраните его сейчас." "The password is shown only once — save it now.")" "$C_YELLOW"
   box_bottom
@@ -2135,7 +2099,7 @@ Usage: $(basename "$SELF") [-y] <command> [arguments]
   analyze                                cores / RAM / disk report
   network                                change network mode: local | private | public (list/all)
   port        [N|default|random]         change the port: 5432, custom or random free
-  nat         [external_port|none]       server behind NAT: external port + forwarding type (TCP/UDP)
+  nat         [external_port|none]       server behind NAT: external port shown to clients
   lang        [en|ru]                    set the message language
   status                                 service, resources and network state
   list                                   databases, users, profiles, access rules
@@ -2168,7 +2132,7 @@ EOF
   analyze                                анализ ядер / RAM / диска
   network                                сменить режим сети: local | private | public (list/all)
   port        [N|default|random]         сменить порт: 5432, свой или случайный свободный
-  nat         [внешний_порт|none]        сервер за NAT: внешний порт и тип проброса (TCP/UDP)
+  nat         [внешний_порт|none]        сервер за NAT: внешний порт для клиентов
   lang        [en|ru]                    выбрать язык сообщений
   status                                 состояние сервиса, ресурсов и сети
   list                                   БД, пользователи, профили, правила доступа

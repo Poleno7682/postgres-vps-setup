@@ -29,7 +29,7 @@
 <text x="664.8" y="251.7" fill="#cba6f7" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="270.7" fill="#cba6f7" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="51.6" y="270.7" fill="#cdd6f4" opacity="0.6" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">NAT</text>
-<text x="186.0" y="270.7" fill="#cdd6f4" font-weight="bold" textLength="394.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">external 37412 -&gt; internal 5432, forwarding tcp</text>
+<text x="186.0" y="270.7" fill="#cdd6f4" font-weight="bold" textLength="260.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">external 37412 -&gt; internal 5432</text>
 <text x="664.8" y="270.7" fill="#cba6f7" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="289.7" fill="#cba6f7" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="51.6" y="289.7" fill="#cdd6f4" opacity="0.6" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Protocol</text>
