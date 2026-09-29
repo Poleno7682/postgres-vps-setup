@@ -225,7 +225,11 @@ sudo ./pg_server_setup.sh
 ## Terminal interface
 
 - **A separate screen for every item.** Before each action the console is cleared and a banner plus a section title is drawn, so earlier output never gets in the way. After the action the script waits for `Enter` and returns to the menu (so a password stays on screen until you have saved it).
-- **The main menu** is grouped (Server, Databases, Users, IP access, Other) and shows live status: PostgreSQL version and state, port, network mode, database count.
+- **The main menu** is grouped (Server, Databases and users, Other) and shows live status: PostgreSQL version and state, port, network mode, database count. Managing databases and users lives in one **"Databases"** section built as navigation: **database list → a database → a user**.
+  - The database list shows the owner, size and number of users; it also has "Create a new database".
+  - A database screen lets you **create a new user**, **select an existing one**, **delete a user** (revoke access to this database or delete completely), rename the database, change its owner or drop it.
+  - Selecting a user shows the **connection details without the password** (IP, port, protocol, database, login, permissions, IP access), a copy-paste block and a URL to fill the password into, plus actions: **change the password**, change the profile, add or remove IP access, connection limit, rename and delete the user.
+  - Separate items such as "Create database", "Change password" or "Delete user" were removed from the main menu: they now live inside the matching screens. The same commands (`db-create`, `user-passwd`, …) stay available for scripts.
 - **`setup`** shows `[3/8]` steps with a progress bar; package installation runs with a spinner and the verbose `apt` output is shown only on failure.
 - **Boxes and colours:** green — success, yellow — warnings and confirmations, red — errors, cyan — questions.
 - **Automatic plain fallback:** when output is not a terminal (logs, `ssh host cmd | tee`, cron) or `NO_COLOR=1` is set, colours, screen clearing and animation are disabled. With `-y` the screen is never cleared. Terminals without UTF-8 get ASCII boxes and icons.
@@ -235,8 +239,10 @@ sudo ./pg_server_setup.sh
 The images are generated from the script's real UI code with sample data (`tools/render_screens.sh`); no server is needed to produce them.
 
 <table>
-<tr><td width="50%" align="center" valign="top"><b>Main menu</b><br><br><img src="docs/screenshots/menu.en.svg" alt="Main menu" width="100%"></td><td width="50%" align="center" valign="top"><b>Initial setup</b><br><br><img src="docs/screenshots/setup.en.svg" alt="Initial setup" width="100%"></td></tr>
-<tr><td width="50%" align="center" valign="top"><b>Resuming after an interruption</b><br><br><img src="docs/screenshots/resume.en.svg" alt="Resuming after an interruption" width="100%"></td><td width="50%" align="center" valign="top"><b>Summary: network and "Done"</b><br><br><img src="docs/screenshots/network.en.svg" alt="Summary: network and "Done"" width="100%"></td></tr>
+<tr><td width="50%" align="center" valign="top"><b>Main menu</b><br><br><img src="docs/screenshots/menu.en.svg" alt="Main menu" width="100%"></td><td width="50%" align="center" valign="top"><b>Databases</b><br><br><img src="docs/screenshots/databases.en.svg" alt="Databases" width="100%"></td></tr>
+<tr><td width="50%" align="center" valign="top"><b>One database: users and actions</b><br><br><img src="docs/screenshots/database.en.svg" alt="One database: users and actions" width="100%"></td><td width="50%" align="center" valign="top"><b>User: connection details without the password</b><br><br><img src="docs/screenshots/user.en.svg" alt="User: connection details without the password" width="100%"></td></tr>
+<tr><td width="50%" align="center" valign="top"><b>Initial setup</b><br><br><img src="docs/screenshots/setup.en.svg" alt="Initial setup" width="100%"></td><td width="50%" align="center" valign="top"><b>Resuming after an interruption</b><br><br><img src="docs/screenshots/resume.en.svg" alt="Resuming after an interruption" width="100%"></td></tr>
+<tr><td width="50%" align="center" valign="top"><b>Summary: network and "Done"</b><br><br><img src="docs/screenshots/network.en.svg" alt="Summary: network and "Done"" width="100%"></td></tr>
 <tr><td colspan="2" align="center" valign="top"><b>Connection details (the password is shown once; the one in the screenshot is a placeholder)</b><br><br><img src="docs/screenshots/creds.en.svg" alt="Connection details (the password is shown once; the one in the screenshot is a placeholder)" width="60%"></td></tr>
 </table>
 
@@ -672,7 +678,7 @@ Just run `sudo ./pg_server_setup.sh setup` again: the script shows the step wher
 <details>
 <summary><b>I did not save the password. How can I see it?</b></summary>
 
-You cannot: PostgreSQL stores only a password hash and the script never writes passwords to disk. Set a new one: `sudo ./pg_server_setup.sh user-passwd NAME`. The other details (IP, port, database, login) are always visible in `status` and `list`.
+You cannot: PostgreSQL stores only a password hash and the script never writes passwords to disk. Set a new one: `sudo ./pg_server_setup.sh user-passwd NAME` (in the menu: "Databases" → database → user → "Change the password"). The other details (IP, port, database, login) are always visible in `status` and `list`.
 
 </details>
 

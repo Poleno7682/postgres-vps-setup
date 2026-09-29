@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="691" height="613" viewBox="0 0 691 613" role="img" aria-label="root@pg-server-01: ~ (pg_server_setup.sh)">
+<rect width="100%" height="100%" rx="10" fill="#1e1e2e"/>
+<path d="M0 10a10 10 0 0 1 10-10h671p10 10v24H0z" fill="#181825"/>
+<circle cx="20" cy="17" r="6" fill="#f38ba8"/><circle cx="40" cy="17" r="6" fill="#f9e2af"/><circle cx="60" cy="17" r="6" fill="#a6e3a1"/>
+<text x="345" y="22" fill="#6c7086" font-size="12" text-anchor="middle" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace">root@pg-server-01: ~ (pg_server_setup.sh)</text>
+<g font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="14">
+<text x="34.8" y="61.7" fill="#005fff" font-weight="bold" textLength="193.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">┏━┓┏━╸  ┏━┓┏━╸╺┳╸╻ ╻┏━┓</text>
+<text x="34.8" y="80.7" fill="#0087ff" font-weight="bold" textLength="193.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">┣━┛┃╺┓  ┗━┓┣╸  ┃ ┃ ┃┣━┛</text>
+<text x="253.2" y="80.7" fill="#cdd6f4" font-weight="bold" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">PostgreSQL VPS manager</text>
+<text x="34.8" y="99.7" fill="#00afff" font-weight="bold" textLength="193.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╹  ┗━┛  ┗━┛┗━╸ ╹ ┗━┛╹  </text>
+<text x="253.2" y="99.7" fill="#cdd6f4" opacity="0.6" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">v2.0.0 · pg-server-01</text>
+<text x="34.8" y="118.7" fill="#cdd6f4" opacity="0.6" textLength="638.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">────────────────────────────────────────────────────────────────────────────</text>
+<rect x="34.8" y="143.0" width="226.8" height="19.0" fill="#89dceb"/>
+<text x="34.8" y="156.7" fill="#1e1e2e" font-weight="bold" textLength="226.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> База данных: calculate_db </text>
+<text x="34.8" y="194.7" fill="#89dceb" font-weight="bold" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭─</text>
+<text x="60.0" y="194.7" fill="#89dceb" font-weight="bold" textLength="100.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">calculate_db</text>
+<text x="169.2" y="194.7" fill="#89dceb" font-weight="bold" textLength="504.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">───────────────────────────────────────────────────────────╮</text>
+<text x="34.8" y="213.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="213.7" fill="#cdd6f4" opacity="0.6" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Владелец</text>
+<text x="186.0" y="213.7" fill="#cdd6f4" font-weight="bold" textLength="126.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">calculate_owner</text>
+<text x="664.8" y="213.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="34.8" y="232.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="232.7" fill="#cdd6f4" opacity="0.6" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Размер</text>
+<text x="186.0" y="232.7" fill="#cdd6f4" font-weight="bold" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">84 MB</text>
+<text x="664.8" y="232.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="34.8" y="251.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="51.6" y="251.7" fill="#cdd6f4" opacity="0.6" textLength="92.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Подключение</text>
+<text x="186.0" y="251.7" fill="#cdd6f4" font-weight="bold" textLength="193.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">203.0.113.9:37412 · TCP</text>
+<text x="664.8" y="251.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="34.8" y="270.7" fill="#89dceb" font-weight="bold" textLength="638.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰──────────────────────────────────────────────────────────────────────────╯</text>
+<text x="34.8" y="308.7" fill="#89b4fa" font-weight="bold" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">━━</text>
+<text x="60.0" y="308.7" fill="#cdd6f4" font-weight="bold" textLength="100.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Пользователи</text>
+<text x="169.2" y="308.7" fill="#89b4fa" font-weight="bold" textLength="504.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</text>
+<text x="51.6" y="327.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="60.0" y="327.7" fill="#cdd6f4" textLength="268.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  calculate_owner               </text>
+<text x="328.8" y="327.7" fill="#f9e2af" font-weight="bold" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">owner</text>
+<text x="51.6" y="346.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="60.0" y="346.7" fill="#cdd6f4" textLength="268.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  calculate_app                 </text>
+<text x="328.8" y="346.7" fill="#a6e3a1" font-weight="bold" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">readwrite</text>
+<text x="51.6" y="365.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">●</text>
+<text x="60.0" y="365.7" fill="#cdd6f4" textLength="268.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  calculate_report              </text>
+<text x="328.8" y="365.7" fill="#89dceb" font-weight="bold" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">readonly</text>
+<text x="34.8" y="403.7" fill="#89b4fa" font-weight="bold" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">━━</text>
+<text x="60.0" y="403.7" fill="#cdd6f4" font-weight="bold" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Действия</text>
+<text x="135.6" y="403.7" fill="#89b4fa" font-weight="bold" textLength="537.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</text>
+<text x="51.6" y="422.7" fill="#89dceb" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  1</text>
+<text x="76.8" y="422.7" fill="#cdd6f4" textLength="243.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Создать нового пользователя</text>
+<text x="51.6" y="441.7" fill="#89dceb" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  2</text>
+<text x="76.8" y="441.7" fill="#cdd6f4" textLength="302.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Выбрать существующего пользователя</text>
+<text x="51.6" y="460.7" fill="#89dceb" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  3</text>
+<text x="76.8" y="460.7" fill="#cdd6f4" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Удалить пользователя</text>
+<text x="51.6" y="479.7" fill="#89dceb" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  4</text>
+<text x="76.8" y="479.7" fill="#cdd6f4" textLength="151.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Переименовать БД</text>
+<text x="51.6" y="498.7" fill="#89dceb" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  5</text>
+<text x="76.8" y="498.7" fill="#cdd6f4" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Сменить владельца БД</text>
+<text x="51.6" y="517.7" fill="#89dceb" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  6</text>
+<text x="76.8" y="517.7" fill="#cdd6f4" textLength="100.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Удалить БД</text>
+<text x="51.6" y="555.7" fill="#f38ba8" font-weight="bold" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  0</text>
+<text x="76.8" y="555.7" fill="#cdd6f4" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  Назад</text>
+<text x="34.8" y="593.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">›</text>
+<text x="43.2" y="593.7" fill="#cdd6f4" textLength="134.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Выберите пункт </text>
+<text x="177.6" y="593.7" fill="#cdd6f4" opacity="0.6" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[0-6]</text>
+<text x="219.6" y="593.7" fill="#cdd6f4" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">: 2</text>
+</g></svg>

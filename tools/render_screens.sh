@@ -9,7 +9,7 @@ mkdir -p "$OUT"
 PY="${PYTHON:-$(command -v python3 || command -v python)}"
 
 for lang in ru en; do
-  for screen in menu setup resume network creds; do
+  for screen in menu databases database user setup resume network creds; do
     bash "$ROOT/tools/demo_screens.sh" "$lang" "$screen" 2>&1 \
       | "$PY" "$ROOT/tools/ansi2svg.py" "$OUT/${screen}.${lang}.svg" --title "root@pg-server-01: ~ (pg_server_setup.sh)"
     echo "wrote docs/screenshots/${screen}.${lang}.svg"

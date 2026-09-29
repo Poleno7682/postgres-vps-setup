@@ -2191,32 +2191,19 @@ EOF
 
 # Menu definition (numbers are assigned automatically, in order).
 # Group rows: "#|Русская группа|English group". Item rows: "command|Русский текст|English text".
+# "@databases" opens the database browser (databases -> users -> connection details).
 MENU_DEF=(
   "#|Сервер|Server"
   "setup|Первичная настройка / проверка|Initial setup / re-check"
   "status|Статус сервера|Server status"
-  "list|БД, пользователи, профили|Databases, users, profiles"
   "analyze|Анализ сервера (ядра, RAM, диск)|Server analysis (cores, RAM, disk)"
   "network|Режим сети (local / private / public)|Network mode (local / private / public)"
   "port|Порт PostgreSQL|PostgreSQL port"
   "nat|Внешний порт и NAT|External port and NAT"
   "firewall-init|Файрвол ufw|Firewall (ufw)"
   "backup-now|Бэкап сейчас|Backup now"
-  "#|Базы данных|Databases"
-  "db-create|Создать БД|Create database"
-  "db-drop|Удалить БД|Drop database"
-  "db-rename|Переименовать БД|Rename database"
-  "db-chown|Сменить владельца БД|Change database owner"
-  "#|Пользователи|Users"
-  "user-create|Создать пользователя|Create user"
-  "user-role|Изменить профиль на БД|Change profile on a database"
-  "user-passwd|Сменить пароль|Change password"
-  "user-rename|Переименовать пользователя|Rename user"
-  "user-limit|Лимит подключений|Connection limit"
-  "user-drop|Удалить пользователя|Drop user"
-  "#|Доступ по IP|IP access"
-  "access-add|Добавить IP-доступ|Add IP access"
-  "access-del|Убрать IP-доступ|Remove IP access"
+  "#|Базы данных и пользователи|Databases and users"
+  "@databases|Базы данных: просмотр и управление|Databases: browse and manage"
   "#|Прочее|Other"
   "lang|Язык сообщений (en / ru)|Message language (en / ru)"
 )
@@ -2245,6 +2232,305 @@ menu_status_box() {
   box_bottom
 }
 
+
+# ---- small UI helpers shared by all menu screens ---------------------------
+
+menu_item() { # menu_item number "text"
+  printf '    %s%3s%s  %s\n' "$C_CYAN$C_BOLD" "$1" "$C_RESET" "$2"
+}
+
+menu_back() { # menu_back ["label"]
+  printf '\n    %s%3s%s  %s\n' "$C_RED$C_BOLD" "0" "$C_RESET" "${1:-$(L "Назад" "Back")}"
+}
+
+menu_prompt() { # menu_prompt VAR max -> reads a choice; returns 1 on end of input
+  local __v="$1" __max="$2" __c=""
+  echo
+  read -r -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Выберите пункт" "Choose an item") ${C_DIM}[0-${__max}]${C_RESET}: " __c || return 1
+  printf -v "$__v" '%s' "$__c"
+}
+
+menu_valid() { # menu_valid choice max  (1..max)
+  [[ "$1" =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= $2 ))
+}
+
+menu_run() { # run a command in a separate process (own screen), then wait for Enter
+  PGMGR_FROM_MENU=1 "$SELF" "$@" || true
+  pause_return
+}
+
+padr() { # padr "text" width  (character-based padding)
+  local t="$1" w="$2" n
+  n=$(( w - ${#t} ))
+  if (( n < 0 )); then n=0; fi
+  printf '%s%*s' "$t" "$n" ''
+}
+
+profile_color() { # colour for a profile name
+  case "$1" in
+    owner)     printf '%s' "$C_YELLOW$C_BOLD" ;;
+    readwrite) printf '%s' "$C_GREEN" ;;
+    readonly)  printf '%s' "$C_CYAN" ;;
+    *)         printf '%s' "$C_DIM" ;;
+  esac
+}
+
+# ---- data access (kept separate so the screens can be rendered with sample data) ----
+
+menu_db_rows() { # name|owner|size|users
+  psql_admin -At -F '|' -d postgres -c "SELECT d.datname, pg_get_userbyid(d.datdba), pg_size_pretty(pg_database_size(d.datname)), 1 + (SELECT count(*) FROM pg_auth_members am JOIN pg_roles g ON g.oid = am.roleid WHERE g.rolname IN (d.datname || '_rw', d.datname || '_ro')) FROM pg_database d WHERE NOT d.datistemplate AND d.datname <> 'postgres' ORDER BY 1" 2>/dev/null || true
+}
+
+menu_db_info() { # owner|size
+  psql_admin -At -F '|' -d postgres -c "SELECT pg_get_userbyid(datdba), pg_size_pretty(pg_database_size(datname)) FROM pg_database WHERE datname='$1'" 2>/dev/null || true
+}
+
+menu_db_users() { # user|profile (owner first, then readwrite, then readonly)
+  psql_admin -At -F '|' -d postgres -c "SELECT u, p FROM (SELECT pg_get_userbyid(datdba) AS u, 'owner' AS p, 0 AS o FROM pg_database WHERE datname='$1' UNION ALL SELECT m.rolname, CASE WHEN g.rolname='$1_rw' THEN 'readwrite' ELSE 'readonly' END, CASE WHEN g.rolname='$1_rw' THEN 1 ELSE 2 END FROM pg_auth_members am JOIN pg_roles g ON g.oid=am.roleid JOIN pg_roles m ON m.oid=am.member WHERE g.rolname IN ('$1_rw','$1_ro')) t ORDER BY o, u" 2>/dev/null || true
+}
+
+menu_user_profile() { # menu_user_profile db user -> owner|readwrite|readonly|none
+  psql_val "SELECT COALESCE((SELECT 'owner' FROM pg_database WHERE datname='$1' AND pg_get_userbyid(datdba)='$2'), (SELECT CASE WHEN g.rolname='$1_rw' THEN 'readwrite' ELSE 'readonly' END FROM pg_auth_members am JOIN pg_roles g ON g.oid=am.roleid JOIN pg_roles m ON m.oid=am.member WHERE m.rolname='$2' AND g.rolname IN ('$1_rw','$1_ro') LIMIT 1), 'none')" 2>/dev/null || echo none
+}
+
+menu_user_limit() { psql_val "SELECT rolconnlimit FROM pg_roles WHERE rolname='$1'" 2>/dev/null || echo -1; }
+
+menu_user_access() { # CIDRs allowed for a (db, user) pair, one per line
+  local f
+  f="$(hba_file 2>/dev/null || true)"
+  if [[ -n "$f" ]]; then
+    { grep "# ${TAG}:$1:$2\$" "$f" || true; } | awk '{print $4}'
+  fi
+}
+
+# ---- Databases: list ------------------------------------------------------------
+
+render_databases_screen() {
+  local i=0 name owner size users
+  DB_NAMES=()
+  screen_begin "$(L "Базы данных" "Databases")"
+  section "$(L "Все базы данных" "All databases")"
+  printf '    %s%s%s\n' "$C_DIM" "$(padr "" 5)$(padr "$(L "БД" "Database")" 26)$(padr "$(L "Владелец" "Owner")" 24)$(padr "$(L "Размер" "Size")" 10)$(L "Польз." "Users")" "$C_RESET"
+  while IFS='|' read -r name owner size users; do
+    [[ -n "$name" ]] || continue
+    i=$(( i + 1 ))
+    DB_NAMES+=("$name")
+    printf '    %s%3d%s  %s%s%s%s%s%s%s%s%s%s\n' "$C_CYAN$C_BOLD" "$i" "$C_RESET" \
+      "$C_BOLD" "$(padr "$name" 26)" "$C_RESET" "$C_DIM" "$(padr "$owner" 24)$(padr "$size" 10)" "$C_RESET" \
+      "$C_GREEN" "$users" "$C_RESET"
+  done < <(menu_db_rows)
+  if (( i == 0 )); then
+    printf '    %s%s%s\n' "$C_DIM" "$(L "Баз данных пока нет." "No databases yet.")" "$C_RESET"
+  fi
+  DB_MAX=$(( i + 1 ))
+  section "$(L "Действия" "Actions")"
+  menu_item "$DB_MAX" "$(L "Создать новую БД" "Create a new database")"
+  menu_back
+}
+
+screen_databases() {
+  local choice
+  while true; do
+    render_databases_screen
+    menu_prompt choice "$DB_MAX" || return 0
+    if [[ -z "$choice" ]]; then continue; fi
+    case "$choice" in 0|q|Q) return 0 ;; esac
+    if ! menu_valid "$choice" "$DB_MAX"; then
+      warn "$(L "Неизвестный пункт: $choice" "Unknown item: $choice")"; sleep 1; continue
+    fi
+    if (( choice == DB_MAX )); then
+      menu_run db-create
+    else
+      screen_database "${DB_NAMES[choice-1]}"
+    fi
+  done
+}
+
+# ---- One database ----------------------------------------------------------------
+
+render_database_screen() { # render_database_screen db
+  local db="$1" owner size u p
+  IFS='|' read -r owner size <<<"$(menu_db_info "$db")"
+  screen_begin "$(L "База данных" "Database"): $db"
+  echo
+  box_top "$db" "$C_CYAN"
+  box_kv "$(L "Владелец" "Owner")" "$owner"
+  box_kv "$(L "Размер" "Size")" "$size"
+  box_kv "$(L "Подключение" "Connect")" "$(connect_host):$(client_port) · TCP"
+  box_bottom
+  section "$(L "Пользователи" "Users")"
+  while IFS='|' read -r u p; do
+    [[ -n "$u" ]] || continue
+    printf '    %s%s%s  %s%s%s%s\n' "$C_GREEN" "$I_DOT" "$C_RESET" "$(padr "$u" 30)" "$(profile_color "$p")" "$p" "$C_RESET"
+  done < <(menu_db_users "$db")
+  section "$(L "Действия" "Actions")"
+  menu_item 1 "$(L "Создать нового пользователя" "Create a new user")"
+  menu_item 2 "$(L "Выбрать существующего пользователя" "Select an existing user")"
+  menu_item 3 "$(L "Удалить пользователя" "Delete a user")"
+  menu_item 4 "$(L "Переименовать БД" "Rename the database")"
+  menu_item 5 "$(L "Сменить владельца БД" "Change the database owner")"
+  menu_item 6 "$(L "Удалить БД" "Drop the database")"
+  menu_back
+}
+
+# Lets the user pick one of the database's users. -> PICKED_USER ('' = went back)
+pick_db_user() { # pick_db_user db "title"
+  local db="$1" title="$2" i u p choice
+  local -a names
+  PICKED_USER=""
+  while true; do
+    names=(); i=0
+    screen_begin "$title: $db"
+    section "$(L "Пользователи" "Users")"
+    while IFS='|' read -r u p; do
+      [[ -n "$u" ]] || continue
+      i=$(( i + 1 ))
+      names+=("$u")
+      menu_item "$i" "$(padr "$u" 30)$(profile_color "$p")$p$C_RESET"
+    done < <(menu_db_users "$db")
+    if (( i == 0 )); then
+      warn "$(L "У этой БД нет пользователей." "This database has no users.")"; sleep 1; return 1
+    fi
+    menu_back
+    menu_prompt choice "$i" || return 1
+    if [[ -z "$choice" ]]; then continue; fi
+    case "$choice" in 0|q|Q) return 1 ;; esac
+    if menu_valid "$choice" "$i"; then PICKED_USER="${names[choice-1]}"; return 0; fi
+    warn "$(L "Неизвестный пункт: $choice" "Unknown item: $choice")"; sleep 1
+  done
+}
+
+delete_db_user() { # delete_db_user db user
+  local db="$1" u="$2" choice others
+  others="$(user_databases "$u" 2>/dev/null || true)"
+  while true; do
+    screen_begin "$(L "Удаление пользователя" "Delete a user"): $u"
+    echo
+    info "$(L "Доступ пользователя '$u': $others" "Access of '$u': $others")"
+    section "$(L "Что сделать" "What to do")"
+    menu_item 1 "$(L "Отозвать доступ к БД '$db' (пользователь останется)" "Revoke access to '$db' (the user stays)")"
+    menu_item 2 "$(L "Удалить пользователя полностью (со всех БД)" "Delete the user completely (from all databases)")"
+    menu_back
+    menu_prompt choice 2 || return 0
+    if [[ -z "$choice" ]]; then continue; fi
+    case "$choice" in
+      0|q|Q) return 0 ;;
+      1) menu_run user-role "$u" "$db" none; return 0 ;;
+      2) menu_run user-drop "$u"; return 0 ;;
+      *) warn "$(L "Неизвестный пункт: $choice" "Unknown item: $choice")"; sleep 1 ;;
+    esac
+  done
+}
+
+screen_database() { # screen_database db
+  local db="$1" choice new
+  while true; do
+    db_exists "$db" || return 0
+    render_database_screen "$db"
+    menu_prompt choice 6 || return 0
+    if [[ -z "$choice" ]]; then continue; fi
+    case "$choice" in
+      0|q|Q) return 0 ;;
+      1) menu_run user-create "" "$db" ;;
+      2) if pick_db_user "$db" "$(L "Выбор пользователя" "Select a user")"; then screen_user "$db" "$PICKED_USER"; fi ;;
+      3) if pick_db_user "$db" "$(L "Удаление пользователя" "Delete a user")"; then delete_db_user "$db" "$PICKED_USER"; fi ;;
+      4)
+        new=""
+        ask new "$(L "Новое имя БД" "New database name")" ""
+        if [[ -n "$new" ]]; then
+          menu_run db-rename "$db" "$new"
+          if db_exists "$new"; then db="$new"; fi
+        fi
+        ;;
+      5) menu_run db-chown "$db" ;;
+      6) menu_run db-drop "$db" ;;
+      *) warn "$(L "Неизвестный пункт: $choice" "Unknown item: $choice")"; sleep 1 ;;
+    esac
+  done
+}
+
+# ---- One user (connection details WITHOUT the password) --------------------------
+
+render_user_screen() { # render_user_screen db user
+  local db="$1" u="$2" host cport profile limit rules url masked
+  host="$(connect_host)"
+  cport="$(client_port)"
+  profile="$(menu_user_profile "$db" "$u")"
+  limit="$(menu_user_limit "$u")"
+  rules="$(menu_user_access "$db" "$u" | paste -sd, - 2>/dev/null || true)"
+  masked="$(rep "$I_DOT" 8)"
+  screen_begin "$(L "Пользователь" "User"): $u"
+  echo
+  box_top "$(L "Данные для подключения" "Connection details")" "$C_GREEN"
+  box_kv "IP" "$host"
+  box_kv "$(L "Порт" "Port")" "$cport"
+  box_kv "$(L "Протокол" "Protocol")" "TCP"
+  box_kv "$(L "Название БД" "Database")" "$db"
+  box_kv "$(L "Логин" "Login")" "$u"
+  box_kv "$(L "Пароль" "Password")" "$masked $(L "(не хранится — сменить: пункт 1)" "(not stored — change: item 1)")" "$C_DIM"
+  box_kv "SSL" "sslmode=require"
+  box_bottom
+  echo
+  box_top "$(L "Права и доступ" "Permissions and access")" "$C_MAGENTA"
+  box_kv "$(L "Профиль" "Profile")" "$profile" "$(profile_color "$profile")"
+  if [[ "$limit" == "-1" ]]; then limit="$(L "без лимита" "unlimited")"; fi
+  box_kv "$(L "Лимит подключ." "Conn. limit")" "$limit"
+  box_kv "$(L "Доступ по IP" "IP access")" "${rules:-$(L "только локально" "local only")}"
+  box_bottom
+
+  url="postgresql://$(urlencode "$u"):PASSWORD@${host}:${cport}/${db}?sslmode=require"
+  echo
+  printf '%s\n' "$(L "Данные для копирования (без пароля):" "Copy-paste details (without the password):")"
+  printf 'IP: %s\n' "$host"
+  printf '%s %s\n' "$(L "Порт:" "Port:")" "$cport"
+  printf '%s %s\n' "$(L "Протокол:" "Protocol:")" "TCP"
+  printf '%s %s\n' "$(L "Название БД:" "Database:")" "$db"
+  printf '%s %s\n' "$(L "Логин:" "Login:")" "$u"
+  printf 'SSL: sslmode=require\n'
+  printf '%s\n' "$(L "Ссылка (подставьте пароль):" "URL (insert the password):")"
+  printf '%s\n' "$url"
+
+  section "$(L "Действия" "Actions")"
+  menu_item 1 "$(L "Сменить пароль" "Change the password")"
+  menu_item 2 "$(L "Изменить профиль на этой БД" "Change the profile on this database")"
+  menu_item 3 "$(L "Добавить IP-доступ" "Add IP access")"
+  menu_item 4 "$(L "Убрать IP-доступ" "Remove IP access")"
+  menu_item 5 "$(L "Лимит подключений" "Connection limit")"
+  menu_item 6 "$(L "Переименовать пользователя" "Rename the user")"
+  menu_item 7 "$(L "Удалить пользователя" "Delete the user")"
+  menu_back
+}
+
+screen_user() { # screen_user db user
+  local db="$1" u="$2" choice new
+  while true; do
+    role_exists "$u" || return 0
+    render_user_screen "$db" "$u"
+    menu_prompt choice 7 || return 0
+    if [[ -z "$choice" ]]; then continue; fi
+    case "$choice" in
+      0|q|Q) return 0 ;;
+      1) menu_run user-passwd "$u" ;;
+      2) menu_run user-role "$u" "$db" ;;
+      3) menu_run access-add "$db" "$u" ;;
+      4) menu_run access-del "$db" "$u" ;;
+      5) menu_run user-limit "$u" ;;
+      6)
+        new=""
+        ask new "$(L "Новое имя пользователя" "New user name")" ""
+        if [[ -n "$new" ]]; then
+          menu_run user-rename "$u" "$new"
+          if role_exists "$new"; then u="$new"; fi
+        fi
+        ;;
+      7) menu_run user-drop "$u" ;;
+      *) warn "$(L "Неизвестный пункт: $choice" "Unknown item: $choice")"; sleep 1 ;;
+    esac
+  done
+}
+
+# ---- Main menu ---------------------------------------------------------------------
+
 render_menu() {
   local row cmd ru en n=0
   declare -gA MENU_CMDS=()
@@ -2258,19 +2544,18 @@ render_menu() {
     else
       n=$(( n + 1 ))
       MENU_CMDS["$n"]="$cmd"
-      printf '    %s%3s%s  %s\n' "$C_CYAN$C_BOLD" "$n" "$C_RESET" "$(L "$ru" "$en")"
+      menu_item "$n" "$(L "$ru" "$en")"
     fi
   done
   MENU_MAX="$n"
-  printf '\n    %s%3s%s  %s\n' "$C_RED$C_BOLD" "0" "$C_RESET" "$(L "Выход" "Exit")"
+  menu_back "$(L "Выход" "Exit")"
 }
 
 menu() {
   local choice cmd
   while true; do
     render_menu
-    echo
-    read -r -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Выберите пункт" "Choose an item") ${C_DIM}[0-${MENU_MAX}]${C_RESET}: " choice || break
+    menu_prompt choice "$MENU_MAX" || break
     if [[ -z "$choice" ]]; then continue; fi
     case "$choice" in
       0|q|Q|exit) break ;;
@@ -2281,20 +2566,22 @@ menu() {
       sleep 1
       continue
     fi
-    if [[ "$cmd" == setup ]]; then
-      PGMGR_FROM_MENU=1 "$SELF" setup --recheck || true
-    else
-      PGMGR_FROM_MENU=1 "$SELF" "$cmd" || true
-    fi
-    if [[ "$cmd" == lang ]]; then
-      LANG_UI="$(state_get LANG_UI)"
-      LANG_UI="${LANG_UI:-$(default_lang)}"
-    fi
-    pause_return
+    case "$cmd" in
+      @databases) screen_databases ;;
+      setup)      PGMGR_FROM_MENU=1 "$SELF" setup --recheck || true; pause_return ;;
+      lang)
+        PGMGR_FROM_MENU=1 "$SELF" lang || true
+        LANG_UI="$(state_get LANG_UI)"
+        LANG_UI="${LANG_UI:-$(default_lang)}"
+        pause_return
+        ;;
+      *)          menu_run "$cmd" ;;
+    esac
   done
   clear_screen
   log "$(L "До свидания!" "Goodbye!")"
 }
+
 
 cmd_title() { # screen title for a command
   case "$1" in

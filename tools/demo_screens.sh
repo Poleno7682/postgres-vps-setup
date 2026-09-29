@@ -40,7 +40,7 @@ HW_STORAGE_DETECTED=ssd; HW_VIRT=kvm; STORAGE=ssd
 screen_menu() {
   render_menu
   printf '
-  %s%s%s %s %s[0-%s]%s: 14
+  %s%s%s %s %s[0-%s]%s: 9
 ' "$C_CYAN" "$I_Q" "$C_RESET" "$(L "Выберите пункт" "Choose an item")" "$C_DIM" "$MENU_MAX" "$C_RESET"
 }
 
@@ -107,6 +107,40 @@ screen_creds() {
   log "$(L "pg_hba: разрешён myproject_owner к myproject_db с 203.0.113.10/32" "pg_hba: allowed myproject_owner to myproject_db from 203.0.113.10/32")"
   CREATED_PASSWORD="3f9a1c7e5b2d80461a9e0c7d4b5f2e83"
   show_credentials myproject_owner myproject_db
+}
+
+# ---- sample data for the database browser screens --------------------------
+menu_db_rows() {
+  printf '%s
+' "calculate_db|calculate_owner|84 MB|3" "shop_db|shop_owner|1240 MB|2" "blog_db|blog_owner|9 MB|2"
+}
+menu_db_info() { echo "calculate_owner|84 MB"; }
+menu_db_users() { printf '%s
+' "calculate_owner|owner" "calculate_app|readwrite" "calculate_report|readonly"; }
+menu_user_profile() { echo readwrite; }
+menu_user_limit() { echo 20; }
+menu_user_access() { printf '%s
+' "203.0.113.10/32" "198.51.100.0/24"; }
+
+demo_prompt() { # demo_prompt max value
+  printf '
+  %s%s%s %s %s[0-%s]%s: %s
+' "$C_CYAN" "$I_Q" "$C_RESET" "$(L "Выберите пункт" "Choose an item")" "$C_DIM" "$1" "$C_RESET" "$2"
+}
+
+screen_databases() {
+  render_databases_screen
+  demo_prompt "$DB_MAX" 1
+}
+
+screen_database() {
+  render_database_screen calculate_db
+  demo_prompt 6 2
+}
+
+screen_user() {
+  render_user_screen calculate_db calculate_app
+  demo_prompt 7 1
 }
 
 "screen_${SCREEN}"
