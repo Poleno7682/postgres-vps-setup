@@ -1,19 +1,47 @@
-# PostgreSQL on a VPS: deploy and manage with a single script
+<div align="center">
 
-**Language:** English · [Русский](README.md)
+<img src="docs/banner.en.svg" alt="PostgreSQL on a VPS: deploy and manage with a single script" width="100%">
+
+<p>
+<a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square"></a>
+<img alt="PostgreSQL 17" src="https://img.shields.io/badge/PostgreSQL-17-336791?style=flat-square&logo=postgresql&logoColor=white">
+<img alt="Ubuntu and Debian" src="https://img.shields.io/badge/Ubuntu%20%7C%20Debian-supported-E95420?style=flat-square&logo=ubuntu&logoColor=white">
+<img alt="Bash" src="https://img.shields.io/badge/shell-bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white">
+<img alt="Idempotent setup" src="https://img.shields.io/badge/setup-idempotent-0ea5e9?style=flat-square">
+<img alt="Languages: English and Russian" src="https://img.shields.io/badge/lang-RU%20%7C%20EN-8b5cf6?style=flat-square">
+<a href="https://github.com/Poleno7682/postgres-vps-setup/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Poleno7682/postgres-vps-setup?style=flat-square&logo=github"></a>
+</p>
+
+<p>
+<a href="#quick-start"><img alt="Quick start" src="https://img.shields.io/badge/-Quick_start-2ea44f?style=for-the-badge&logo=gnubash&logoColor=white"></a>
+<a href="#features"><img alt="Features" src="https://img.shields.io/badge/-Features-2563eb?style=for-the-badge&logo=postgresql&logoColor=white"></a>
+<a href="#command-reference"><img alt="Commands" src="https://img.shields.io/badge/-Commands-7c3aed?style=for-the-badge&logo=windowsterminal&logoColor=white"></a>
+<a href="#screenshots"><img alt="Screenshots" src="https://img.shields.io/badge/-Screenshots-ea580c?style=for-the-badge"></a>
+<a href="#faq"><img alt="FAQ" src="https://img.shields.io/badge/-FAQ-db2777?style=for-the-badge&logo=readme&logoColor=white"></a>
+<a href="README.md"><img alt="Русский" src="https://img.shields.io/badge/-%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-475569?style=for-the-badge&logo=googletranslate&logoColor=white"></a>
+</p>
+
+<p><b>One script turns a fresh VPS into a PostgreSQL host for multiple projects:<br>every project gets its own database, users and permissions.</b></p>
+
+</div>
 
 `pg_server_setup.sh` turns a fresh **dedicated Ubuntu/Debian server into a PostgreSQL host for multiple projects**: every project gets its own database, its own users and permissions, and tables of different projects never overlap.
 
 The script is **idempotent**: running it again checks what is already installed and running and configures only what is missing.
 
+> [!NOTE]
 > **Language:** the script speaks **English and Russian**. On the first interactive run it asks which language to use and remembers the choice; change it any time with `sudo ./pg_server_setup.sh lang [en|ru]` (or `LANG_UI=en|ru` for non-interactive runs). Without an interactive terminal the language is taken from the system `$LANG`.
+
+<details>
+<summary><b>Table of contents</b></summary>
 
 - [Features](#features)
 - [Requirements](#requirements)
 - [Quick start](#quick-start) (including [one-command install](#one-command-install))
+- [Terminal interface and screenshots](#terminal-interface)
 - [What `setup` does](#what-setup-does)
 - [Network modes](#network-modes)
-- [PostgreSQL port](#postgresql-port)
+- [PostgreSQL port](#postgresql-port) and [NAT](#nat-external-port-and-protocol)
 - [Isolation model and roles](#isolation-model-and-roles)
 - [Command reference](#command-reference)
 - [Scenarios](#scenarios)
@@ -24,29 +52,33 @@ The script is **idempotent**: running it again checks what is already installed 
 - [What the script creates on the server](#what-the-script-creates-on-the-server)
 - [Security checklist](#security-checklist)
 - [Troubleshooting](#troubleshooting)
-- [Updates](#updates)
-- [Removal](#removal)
+- [FAQ](#faq)
+- [Updates](#updates) · [Removal](#removal)
+
+</details>
 
 ---
 
 ## Features
 
-| Area | What the script does |
-|---|---|
-| Installation | PostgreSQL from the official PGDG repository, autostart, service health check on every re-run |
-| Server analysis | CPU cores, RAM (total / free / used), swap, disk space, disk type, virtualization |
-| Auto-tuning | `shared_buffers`, `work_mem`, `max_connections`, parallel workers, WAL, SSD/HDD parameters |
-| Network | Three modes: `local`, `private` (private network/VPN), `public` (IP/range allowlist or open to everyone) |
-| Port | Standard 5432, custom, or a random free port; changeable at any time with `ufw` and backup rules migrated |
-| NAT | Server behind NAT: the external port (assigned by the provider) and forwarding type TCP/UDP appear in the connection details |
-| Databases | Create, drop (with a final dump), rename, change owner |
-| Users | Create, drop, rename, change password (your own or generated), connection limit |
-| Roles | Per-database profiles: `owner`, `readwrite`, `readonly`, `none` |
-| Access | `pg_hba.conf` and `ufw` rules per specific IP/range for each "database + user" pair |
-| Backups | Daily `pg_dump` of every database plus global roles, with rotation |
-| Extras | Swap as OOM insurance, `vm.swappiness=1`, `pg_stat_statements`, interactive menu |
-| Language | Messages in English or Russian, selectable at first run or with `lang` |
-| Interface | Colourful ASCII banner, boxes, install progress, spinner, a separate clean screen for every menu item |
+<table>
+<tr>
+<td width="50%" valign="top"><b>🚀 Setup without surprises</b><br>PostgreSQL from the PGDG repository, autostart. Re-running verifies every step and <b>continues where it stopped</b>.</td>
+<td width="50%" valign="top"><b>🧠 Auto-tuning for your server</b><br>Analyses cores, RAM and disk: <code>shared_buffers</code>, <code>work_mem</code>, <code>max_connections</code>, parallel workers, WAL.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>🌐 Network your way</b><br><code>local</code>, <code>private</code> (VPN/VPC) or <code>public</code> (IP allowlist or everyone). Port: 5432, custom or a random free one.</td>
+<td width="50%" valign="top"><b>📡 Servers behind NAT</b><br>The provider-assigned external port and forwarding type (TCP/UDP) in the connection details, with hints on why PostgreSQL needs TCP.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>🗄️ A database per project</b><br>A dedicated database and permissions per project; tables never overlap. Profiles: <code>owner</code>, <code>readwrite</code>, <code>readonly</code>.</td>
+<td width="50%" valign="top"><b>🔑 Passwords and details</b><br>Your own password (Latin letters and digits, 6+ characters) or a generated one. A copy-paste block and a ready-to-use <b>connection URL</b>.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><b>💾 Backups</b><br>Daily <code>pg_dump</code> of every database and roles, rotation, a final dump before a database is dropped.</td>
+<td width="50%" valign="top"><b>🖥️ A beautiful terminal</b><br>Colourful interface: banner, boxes, progress, a separate clean screen for every menu item. English and Russian.</td>
+</tr>
+</table>
 
 ## Requirements
 
@@ -63,6 +95,7 @@ Recommended configuration for several small and medium projects:
 | RAM | 2 GB | 4–8 GB |
 | Disk | SSD | NVMe, keep 30% free |
 
+> [!TIP]
 > Example: a server with **2 cores / 4 GB RAM / 60 GB SSD / 100 Mbit/s** is a great dedicated database host for several projects.
 
 ## Quick start
@@ -89,6 +122,7 @@ Or with `git`:
 git clone https://github.com/Poleno7682/postgres-vps-setup.git && cd postgres-vps-setup && sudo ./pg_server_setup.sh setup
 ```
 
+> [!NOTE]
 > Do not run the script as `curl ... | bash`: in interactive mode it asks questions (network mode, port, password) and needs keyboard input. That is why the file is downloaded first and then executed.
 >
 > Before running anything from the internet as root, read it: `less pg_server_setup.sh`. For reproducibility you can pin a specific commit by putting its hash in the URL instead of `main`.
@@ -199,25 +233,11 @@ sudo ./pg_server_setup.sh
 
 The images are generated from the script's real UI code with sample data (`tools/render_screens.sh`); no server is needed to produce them.
 
-**Main menu**: server status and grouped items.
-
-![Main menu](docs/screenshots/menu.en.svg)
-
-**Initial `setup`**: server analysis and `[n/8]` steps with progress.
-
-![Initial setup](docs/screenshots/setup.en.svg)
-
-**Resuming after an interruption**: completed steps are skipped (`↷`), missing ones are finished.
-
-![Resuming setup](docs/screenshots/resume.en.svg)
-
-**Summary: network and "Done"**.
-
-![Network and summary](docs/screenshots/network.en.svg)
-
-**Connection details** (the password is shown once; the one in the screenshot is a placeholder).
-
-![Connection details](docs/screenshots/creds.en.svg)
+<table>
+<tr><td width="50%" align="center" valign="top"><b>Main menu</b><br><br><img src="docs/screenshots/menu.en.svg" alt="Main menu" width="100%"></td><td width="50%" align="center" valign="top"><b>Initial setup</b><br><br><img src="docs/screenshots/setup.en.svg" alt="Initial setup" width="100%"></td></tr>
+<tr><td width="50%" align="center" valign="top"><b>Resuming after an interruption</b><br><br><img src="docs/screenshots/resume.en.svg" alt="Resuming after an interruption" width="100%"></td><td width="50%" align="center" valign="top"><b>Summary: network and "Done"</b><br><br><img src="docs/screenshots/network.en.svg" alt="Summary: network and "Done"" width="100%"></td></tr>
+<tr><td colspan="2" align="center" valign="top"><b>Connection details (the password is shown once; the one in the screenshot is a placeholder)</b><br><br><img src="docs/screenshots/creds.en.svg" alt="Connection details (the password is shown once; the one in the screenshot is a placeholder)" width="60%"></td></tr>
+</table>
 
 ## What `setup` does
 
@@ -277,6 +297,7 @@ The mode is chosen on the first `setup` (interactively or via environment variab
 - In public mode `log_connections` and `log_disconnections` are additionally enabled.
 - Enabling `ufw` (`firewall-init`) is strongly recommended.
 
+> [!NOTE]
 > Even with the `all` policy, `pg_hba.conf` rules are created **for a specific "database + user" pair**, not "everyone to everything". Authentication is `scram-sha-256`, and the connection type is `hostssl` (SSL only).
 
 ## PostgreSQL port
@@ -310,6 +331,7 @@ When the port changes, the script:
 
 For all new connections use `psql -p <port> ...` and `host:port` in URLs. `pg_hba.conf` rules do not depend on the port.
 
+> [!NOTE]
 > A non-standard port is not protection against attacks: scanners will find any open port. It only reduces log noise. The real protection is the network mode, IP allowlist, `ufw`, passwords and SSL.
 
 ## NAT, external port and protocol
@@ -350,6 +372,7 @@ One user can have different profiles in different databases.
 
 `readwrite` and `readonly` privileges automatically extend to **future tables** (via `DEFAULT PRIVILEGES`), but only for tables created by the **database owner**. Therefore:
 
+> [!IMPORTANT]
 > **Run migrations as the database owner** (`<db>_owner`) and connect the application as a user with the `readwrite` profile.
 
 Limitations:
@@ -487,6 +510,7 @@ psql "host=10.0.0.5 port=5432 dbname=app_db user=app_user sslmode=require"
 
 If the password contains special characters (`@ : / ? # %`), they must be percent-encoded in the URL, for example with `urllib.parse.quote_plus`.
 
+> [!NOTE]
 > The default certificate is self-signed: it encrypts traffic but does not prove the server's identity. For `sslmode=verify-full`, install a real certificate (for example, Let's Encrypt).
 
 When there are many clients (bots, workers, web), use connection pooling in the application and, if needed, PgBouncer in `transaction` mode.
@@ -529,6 +553,7 @@ Every day at **03:00** cron runs `/usr/local/sbin/pgmgr-backup` as `postgres`. E
 
 Run a backup manually: `sudo ./pg_server_setup.sh backup-now`.
 
+> [!WARNING]
 > **Backups live on the same disk as the data.** Set up off-server copying (for example, `rclone` to S3/Backblaze/another server) and test restores periodically.
 
 ### Restoring a database
@@ -624,6 +649,155 @@ sudo -u postgres psql -c "SELECT * FROM pg_hba_file_rules WHERE error IS NOT NUL
 sudo tail -n 50 /var/log/postgresql/postgresql-*-main.log
 ```
 
+## FAQ
+
+<details>
+<summary><b>Which systems are supported?</b></summary>
+
+Ubuntu 22.04 / 24.04 and Debian 11 / 12 / 13 with `systemd` and `apt`. CentOS/RHEL, Alpine and containers without `systemd` are not supported.
+
+</details>
+
+<details>
+<summary><b>Can I run `setup` again? Will anything break?</b></summary>
+
+Yes. The script is idempotent: it checks the real state (packages, repository, cluster, service, settings file, swap, backup) and does only what is missing. Databases, users and data are untouched. Performance settings are recalculated for the current hardware, so re-running `setup` is useful after adding RAM.
+
+</details>
+
+<details>
+<summary><b>Setup was interrupted (dropped SSH, `Ctrl+C`, reboot). What now?</b></summary>
+
+Just run `sudo ./pg_server_setup.sh setup` again: the script shows the step where the previous run stopped, skips what is done and continues. Details: [“If setup was interrupted”](#if-setup-was-interrupted). On an unstable connection run `setup` inside `tmux` or `screen`.
+
+</details>
+
+<details>
+<summary><b>I did not save the password. How can I see it?</b></summary>
+
+You cannot: PostgreSQL stores only a password hash and the script never writes passwords to disk. Set a new one: `sudo ./pg_server_setup.sh user-passwd NAME`. The other details (IP, port, database, login) are always visible in `status` and `list`.
+
+</details>
+
+<details>
+<summary><b>How do I connect my application?</b></summary>
+
+Use the ready-made URL from the "Connection details" block: `postgresql://login:password@IP:port/database?sslmode=require`. For SQLAlchemy add the driver: `postgresql+psycopg2://…`. Examples: [“Connecting from an application”](#connecting-from-an-application).
+
+</details>
+
+<details>
+<summary><b>Why a separate database owner and a `readwrite` user?</b></summary>
+
+Least privilege. The owner creates and changes tables (migrations), while the application runs as a `readwrite` user that cannot drop tables or change the schema. Connect reports and BI with a `readonly` user. Privileges on new tables are granted automatically when the database owner creates them.
+
+</details>
+
+<details>
+<summary><b>Can I keep several projects on one server?</b></summary>
+
+Yes, that is the main purpose of the script. Every project gets its own database, and `CONNECT` plus schema rights are revoked from `PUBLIC`, so a user of one project cannot see or read another project's database.
+
+</details>
+
+<details>
+<summary><b>How do I change the port, network mode or external port later?</b></summary>
+
+`sudo ./pg_server_setup.sh port` (port), `network` (mode and IP list), `nat` (external port and forwarding type). `ufw` rules and the backup script are updated automatically when the port changes.
+
+</details>
+
+<details>
+<summary><b>My server is behind NAT and the provider assigns the external port. How do I handle that?</b></summary>
+
+Configure the internal port as usual and enter the external one in the NAT question (or `nat 37412`). It will appear in the connection details and the URL. Clients must connect to the external port; `ufw` and `pg_hba.conf` keep working with the internal one.
+
+</details>
+
+<details>
+<summary><b>The provider forwards UDP only. Will that work?</b></summary>
+
+No: PostgreSQL works over TCP only. Enable a TCP forward (or TCP+UDP; UDP is simply unused), or connect through a WireGuard/Tailscale tunnel (it runs over UDP) with the `private` mode.
+
+</details>
+
+<details>
+<summary><b>Is it safe to allow access from everywhere (`0.0.0.0/0`)?</b></summary>
+
+Better avoid it: the port becomes a brute-force target. Protection remains (SCRAM passwords, SSL, per "database + user" rules), but an IP allowlist, `ufw` and long passwords are much safer. If you must, install a real certificate and connect with `sslmode=verify-full`.
+
+</details>
+
+<details>
+<summary><b>How do I install a real SSL certificate?</b></summary>
+
+The default certificate is self-signed: it encrypts traffic but does not prove the server's identity. Get a certificate (for example from Let's Encrypt), copy `fullchain.pem` and `privkey.pem` to a directory readable by `postgres`, and add `/etc/postgresql/<version>/main/conf.d/98-ssl.conf`:
+
+```ini
+ssl_cert_file = '/etc/postgresql/17/ssl/fullchain.pem'
+ssl_key_file  = '/etc/postgresql/17/ssl/privkey.pem'
+```
+
+Then `sudo systemctl reload postgresql` and connect with `sslmode=verify-full`. Do not edit `99-pgmgr.conf`: it is rewritten by `setup`.
+
+</details>
+
+<details>
+<summary><b>Why must a custom password use only Latin letters and digits?</b></summary>
+
+So it works without escaping or encoding in URLs, `.env` files, shells and configs. Strength comes from length: generated passwords have 40 characters. For an internet-facing server prefer generation.
+
+</details>
+
+<details>
+<summary><b>Can I use the script where PostgreSQL is already installed?</b></summary>
+
+Yes, if it was installed from packages (`apt`) and shows up in `pg_lsclusters`: the script picks up the cluster and does not reinstall it. It will, however, overwrite the performance settings in `conf.d/99-pgmgr.conf` and add its rules to `pg_hba.conf` (the original is kept as `pg_hba.conf.pgmgr.orig`). Take a backup first. Docker or source-built clusters are not supported.
+
+</details>
+
+<details>
+<summary><b>How do I run it unattended (cloud-init, Ansible)?</b></summary>
+
+Pass parameters through environment variables and the `-y` flag:
+
+```bash
+sudo NETWORK_MODE=public ACCESS_POLICY=list ALLOWED_CIDR="203.0.113.10" DB_PORT=random LANG_UI=en \
+     ./pg_server_setup.sh -y setup
+```
+
+See [“Environment variables”](#environment-variables) for the full list.
+
+</details>
+
+<details>
+<summary><b>Does the script send data anywhere?</b></summary>
+
+No telemetry, and passwords never leave the server. Network access is limited to `apt`/PGDG repositories and — only in `public` mode behind NAT when the IP cannot be found locally — `api.ipify.org`/`ifconfig.me` to learn the external address. Set `PGMGR_HOST` to avoid the latter.
+
+</details>
+
+<details>
+<summary><b>How do I turn off colours or change the language?</b></summary>
+
+`NO_COLOR=1` disables colours, `PGMGR_ASCII=1` uses ASCII boxes instead of Unicode, `sudo ./pg_server_setup.sh lang en|ru` changes the language. When output is not a terminal (logs, cron) the decoration turns off automatically.
+
+</details>
+
+<details>
+<summary><b>How do I update the script itself?</b></summary>
+
+Download the new version with the same command as for installation and run `setup`: the saved settings in `/etc/pgmgr/pgmgr.conf` are kept and new checks are applied.
+
+</details>
+
+<details>
+<summary><b>How do I remove PostgreSQL and the settings completely?</b></summary>
+
+See [“Removal”](#removal). Take backups first: the data will be lost.
+
+</details>
+
 ## Updates
 
 - **PostgreSQL minor updates** (safe, only need a restart): `apt update && apt upgrade`.
@@ -647,3 +821,11 @@ Remove the swap file (`/swapfile` and its `/etc/fstab` line) manually if needed.
 ## License
 
 [MIT](LICENSE) © 2026 Poleno7682
+
+---
+
+<div align="center">
+
+<sub>Made for people who like clear, repeatable deployments. · <a href="#top">Back to top ↑</a></sub>
+
+</div>

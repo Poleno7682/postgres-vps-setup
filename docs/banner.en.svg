@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340" role="img" aria-label="PostgreSQL on a VPS — Deploy and manage with a single script">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1220"/><stop offset="0.55" stop-color="#11306b"/><stop offset="1" stop-color="#0e7490"/></linearGradient><linearGradient id="ttl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#93c5fd"/></linearGradient><radialGradient id="glow" cx="0.85" cy="0.1" r="0.7"><stop offset="0" stop-color="#38bdf8" stop-opacity="0.35"/><stop offset="1" stop-color="#38bdf8" stop-opacity="0"/></radialGradient><pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.2" fill="#ffffff" fill-opacity="0.07"/></pattern><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.45"/></filter></defs>
+<rect width="1280" height="340" rx="18" fill="url(#bg)"/>
+<rect width="1280" height="340" rx="18" fill="url(#dots)"/>
+<rect width="1280" height="340" rx="18" fill="url(#glow)"/>
+<g transform="translate(64 62)" fill="none" stroke="#7dd3fc" stroke-width="5" stroke-linecap="round"><ellipse cx="42" cy="18" rx="38" ry="14" fill="#0ea5e9" fill-opacity="0.25"/><path d="M4 18v30c0 8 17 14 38 14s38-6 38-14V18"/><path d="M4 48v30c0 8 17 14 38 14s38-6 38-14V48"/><path d="M4 33c0 8 17 14 38 14s38-6 38-14" stroke-opacity="0.6"/></g>
+<text x="176" y="120" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="60" font-weight="800" fill="url(#ttl)" textLength="646" lengthAdjust="spacingAndGlyphs">PostgreSQL on a VPS</text>
+<text x="178" y="166" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="22" fill="#bfdbfe">Deploy and manage with a single script</text>
+<rect x="64" y="224" width="146" height="42" rx="21" fill="#ffffff" fill-opacity="0.10" stroke="#93c5fd" stroke-opacity="0.45"/>
+<text x="137" y="251" text-anchor="middle" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="17" font-weight="600" fill="#e0f2fe">Auto-tuning</text>
+<rect x="222.2" y="224" width="177" height="42" rx="21" fill="#ffffff" fill-opacity="0.10" stroke="#93c5fd" stroke-opacity="0.45"/>
+<text x="311" y="251" text-anchor="middle" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="17" font-weight="600" fill="#e0f2fe">DB per project</text>
+<rect x="411.0" y="224" width="105" height="42" rx="21" fill="#ffffff" fill-opacity="0.10" stroke="#93c5fd" stroke-opacity="0.45"/>
+<text x="464" y="251" text-anchor="middle" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="17" font-weight="600" fill="#e0f2fe">Backups</text>
+<rect x="528.4" y="224" width="126" height="42" rx="21" fill="#ffffff" fill-opacity="0.10" stroke="#93c5fd" stroke-opacity="0.45"/>
+<text x="591" y="251" text-anchor="middle" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="17" font-weight="600" fill="#e0f2fe">NAT-ready</text>
+<rect x="666.2" y="224" width="105" height="42" rx="21" fill="#ffffff" fill-opacity="0.10" stroke="#93c5fd" stroke-opacity="0.45"/>
+<text x="719" y="251" text-anchor="middle" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="17" font-weight="600" fill="#e0f2fe">EN · RU</text>
+<g filter="url(#shadow)"><rect x="826" y="50" width="404" height="240" rx="14" fill="#1e1e2e"/></g>
+<path d="M826 64a14 14 0 0 1 14-14h376a14 14 0 0 1 14 14v18H826z" fill="#181825"/>
+<circle cx="848" cy="66" r="6" fill="#f38ba8"/>
+<circle cx="868" cy="66" r="6" fill="#f9e2af"/>
+<circle cx="888" cy="66" r="6" fill="#a6e3a1"/>
+<text x="850" y="112" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="16" fill="#cdd6f4" xml:space="preserve">$ sudo ./pg_server_setup.sh setup</text>
+<text x="850" y="146" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="16" fill="#a6e3a1" xml:space="preserve">✔ PostgreSQL 17 installed</text>
+<text x="850" y="180" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="16" fill="#a6e3a1" xml:space="preserve">✔ Tuned for 2 cores / 4 GB</text>
+<text x="850" y="214" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="16" fill="#a6e3a1" xml:space="preserve">✔ Backups: daily at 03:00</text>
+<text x="850" y="248" font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="16" fill="#89dceb" xml:space="preserve">● Ready: 203.0.113.9:5432</text>
+</svg>
