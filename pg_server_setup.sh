@@ -1068,6 +1068,7 @@ select_nat() { # select_nat [force=0]
         "$(L "Нет — клиенты подключаются напрямую, внешний порт = внутренний" "No — clients connect directly, external port = internal port")" \
         "$(L "Да — внешний порт назначает провайдер/роутер, его нужно показывать в данных подключения" "Yes — the provider/router assigns the external port, show it in the connection details")"
       if (( idx == 2 )); then
+        info "$(L "Примечание: PostgreSQL использует соединение TCP (UDP не поддерживает) — в панели провайдера нужен проброс типа TCP." "Note: PostgreSQL uses a TCP connection (UDP is not supported) — the provider's port forward must be of type TCP.")"
         ask ext "$(L "Внешний порт (посмотрите в панели провайдера)" "External port (see your provider's panel)")" "$cur"
       else
         ext=none
