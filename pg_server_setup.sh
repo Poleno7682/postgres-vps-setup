@@ -2105,6 +2105,7 @@ M_DISK_PCT=0; M_DISK_USED_GB=0; M_DISK_TOTAL_GB=0
 M_RX=0; M_TX=0
 M_PG_UP=0; M_CONN=0; M_ACTIVE=0; M_MAXCONN=100; M_TPS=0; M_HIT=100; M_SIZE="-"; M_UPTIME=0; M_DBS=0
 S_VERSION=""; S_UFW=""; S_BACKUP=""; S_SVC_STATE=""
+ST_LEVEL=0; ST_ROWS=0   # dashboard density: 0 = roomy, 1 = compact, 2 = minimal
 CPU_PREV_T=0; CPU_PREV_I=0; NET_IF=""; NET_PREV_RX=0; NET_PREV_TX=0; NET_PREV_US=0
 PG_PREV_X=0; PG_PREV_US=0
 
@@ -2250,6 +2251,19 @@ sample_postgres() {
   hist_push H_TPS "$M_TPS"
 }
 
+# Picks how dense the dashboard is, so a frame never scrolls a short terminal.
+status_layout() {
+  local rows=0 cols=0
+  read -r rows cols < <(stty size 2>/dev/null) || true
+  rows="${rows:-0}"
+  ST_ROWS="$rows"
+  if (( rows == 0 || rows >= 30 )); then ST_LEVEL=0
+  elif (( rows >= 24 )); then ST_LEVEL=1
+  else ST_LEVEL=2; fi
+}
+
+gap() { if (( ST_LEVEL == 0 )); then echo; fi; }
+
 status_static() { # slow-changing facts, collected once
   S_VERSION=""
   S_SVC_STATE="$(L "не установлен" "not installed")"
@@ -2274,10 +2288,11 @@ render_status_frame() { # render_status_frame [live]
   mode="$(state_get NETWORK_MODE)"
   cport="$(client_port)"
   if [[ "$live" == live ]]; then
-    printf '\n  %s %s %s  %s%s%s\n' "$C_INV$C_CYAN" "$(L "Статус сервера" "Server status")" "$C_RESET" "$C_DIM" \
+    gap
+    printf '  %s %s %s  %s%s%s\n' "$C_INV$C_CYAN" "$(L "Статус сервера" "Server status")" "$C_RESET" "$C_DIM" \
       "$(L "$(hostname) · обновление каждые 2 с · любая клавиша — выход" "$(hostname) · refresh every 2 s · any key to exit")" "$C_RESET"
   fi
-  echo
+  gap
   box_top "$(L "Нагрузка сервера" "Server load")" "$C_CYAN"
   dash_row "CPU" "$M_CPU" "$(L "$HW_CORES ядер" "$HW_CORES cores")" H_CPU 100
   dash_row "$(L "Нагрузка" "Load avg")" "$M_LOADPCT" "$M_LOAD1 $M_LOAD5 $M_LOAD15" H_LOAD 100
@@ -2288,7 +2303,7 @@ render_status_frame() { # render_status_frame [live]
   dash_row "$(L "Сеть ↑" "Net ↑")" -1 "$(fmt_rate "$M_TX")" H_TX
   box_bottom
 
-  echo
+  gap
   if [[ "$M_PG_UP" == 1 ]]; then
     box_top "PostgreSQL" "$C_GREEN"
     conn_extra="$M_CONN / $M_MAXCONN · $(L "акт." "act.") $M_ACTIVE"
@@ -2305,13 +2320,15 @@ render_status_frame() { # render_status_frame [live]
     box_bottom
   fi
 
-  echo
-  box_top "$(L "Сервис и защита" "Service and protection")" "$C_MAGENTA"
-  box_kv "$(L "Версия" "Version")" "${S_VERSION:-—} · ${PG_CLUSTER:-main} · $S_SVC_STATE"
-  box_kv "$(L "Подключение" "Connect")" "$(connect_host):${cport} · TCP · ${mode:-—}"
-  box_kv "$(L "Файрвол ufw" "Firewall ufw")" "$S_UFW"
-  box_kv "$(L "Посл. бэкап" "Last backup")" "$S_BACKUP"
-  box_bottom
+  if (( ST_LEVEL < 2 )); then
+    gap
+    box_top "$(L "Сервис и защита" "Service and protection")" "$C_MAGENTA"
+    box_kv "$(L "Версия" "Version")" "${S_VERSION:-—} · ${PG_CLUSTER:-main} · $S_SVC_STATE"
+    box_kv "$(L "Подключение" "Connect")" "$(connect_host):${cport} · TCP · ${mode:-—}"
+    box_kv "$(L "Файрвол ufw" "Firewall ufw")" "$S_UFW"
+    box_kv "$(L "Посл. бэкап" "Last backup")" "$S_BACKUP"
+    box_bottom
+  fi
 }
 
 status_prime() { # first samples so rates have a baseline, then a short warm-up history
@@ -2332,8 +2349,13 @@ status_live() {
   while true; do
     sample_system
     sample_postgres
+    status_layout
     frame="$(render_status_frame live)"
-    printf '\033[H%s\n\033[J' "$frame"
+    if (( ST_ROWS > 3 )); then
+      frame="$(printf '%s\n' "$frame" | head -n $(( ST_ROWS - 2 )))"   # never taller than the screen
+    fi
+    frame="${frame//$'\n'/$'\033[K\n'}"                                # erase leftovers of the previous frame
+    printf '\033[H%s\033[K\n\033[J' "$frame"
     if read -rs -n1 -t 2 k; then break; fi
   done
   printf '\033[?25h'
