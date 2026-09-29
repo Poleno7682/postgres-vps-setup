@@ -6,7 +6,7 @@
 
 The script is **idempotent**: running it again checks what is already installed and running and configures only what is missing.
 
-> **Note:** the script's own console output and prompts are in Russian. This document describes what each step does. The only Russian word you have to type is the confirmation `ВСЕМ` ("everyone") when you open PostgreSQL to the whole internet (`public` + `all`).
+> **Language:** the script speaks **English and Russian**. On the first interactive run it asks which language to use and remembers the choice; change it any time with `sudo ./pg_server_setup.sh lang [en|ru]` (or `LANG_UI=en|ru` for non-interactive runs). Without an interactive terminal the language is taken from the system `$LANG`.
 
 - [Features](#features)
 - [Requirements](#requirements)
@@ -44,6 +44,7 @@ The script is **idempotent**: running it again checks what is already installed 
 | Access | `pg_hba.conf` and `ufw` rules per specific IP/range for each "database + user" pair |
 | Backups | Daily `pg_dump` of every database plus global roles, with rotation |
 | Extras | Swap as OOM insurance, `vm.swappiness=1`, `pg_stat_statements`, interactive menu |
+| Language | Messages in English or Russian, selectable at first run or with `lang` |
 
 ## Requirements
 
@@ -121,6 +122,7 @@ sudo ./pg_server_setup.sh setup
 
 Step by step, the script will:
 
+0. on the very first interactive run, ask for the message language (English / Русский);
 1. show a server analysis (cores, RAM, disk);
 2. install PostgreSQL (if not installed yet);
 3. ask for the **network mode** (`local` / `private` / `public`) and the IPs allowed to connect;
@@ -142,16 +144,16 @@ sudo ./pg_server_setup.sh user-create myproject_app myproject_db readwrite
 sudo ./pg_server_setup.sh user-create myproject_report myproject_db readonly
 ```
 
-At the end of each command a connection details block is printed (labels are in Russian in the actual output):
+At the end of each command a connection details block is printed:
 
 ```text
-============== Connection details ==============
-  IP:            203.0.113.9
-  Port:          5432
-  Database:      myproject_db
-  Login:         myproject_owner
-  Password:      ********************
-  SSL:           sslmode=require
+==================== Connection details ====================
+  IP:           203.0.113.9
+  Port:         5432
+  Database:     myproject_db
+  Login:        myproject_owner
+  Password:     ********************
+  SSL:          sslmode=require
 ```
 
 The password is shown **only once**, at this final stage (after `setup` if you created the first database, and after `db-create`, `user-create` and `user-passwd`). It is never printed again: `status`, `list` and the menu do not show it. Save it to a password manager or your application's secrets immediately.
@@ -206,7 +208,7 @@ The mode is chosen on the first `setup` (interactively or via environment variab
 | Policy | What happens |
 |---|---|
 | **list** (recommended) | Access only from the listed IPs / ranges, for example `203.0.113.10, 198.51.100.0/24` |
-| **all** | Access from any address (`0.0.0.0/0`). You must type the word `ВСЕМ` to confirm. Protected only by password and SSL |
+| **all** | Access from any address (`0.0.0.0/0`). You must type the word `EVERYONE` to confirm (`ВСЕМ` in Russian mode). Protected only by password and SSL |
 
 - In public mode `log_connections` and `log_disconnections` are additionally enabled.
 - Enabling `ufw` (`firewall-init`) is strongly recommended.
@@ -293,6 +295,7 @@ Arguments you do not pass are requested interactively. The `-y` flag disables co
 | `analyze` | Report on cores, RAM, disk |
 | `network` | Change the network mode (`local` / `private` / `public`) |
 | `port [N\|default\|random]` | Change the PostgreSQL port: 5432, custom, or random free |
+| `lang [en\|ru]` | Set the language of the script's messages |
 | `status` | Service, resources, network, last backup |
 | `list` | Databases, users, profiles, access rules |
 | `db-create [db] [owner] [ip]` | Create a database, its owner and the `_rw` / `_ro` groups |
@@ -370,7 +373,7 @@ sudo ./pg_server_setup.sh access-add app_db app_user 192.0.2.44
 sudo NETWORK_MODE=public ACCESS_POLICY=all ./pg_server_setup.sh setup
 ```
 
-The script warns you and requires typing `ВСЕМ`. Recommendations: strong passwords, `ufw`, a real SSL certificate, log monitoring.
+The script warns you and requires typing `EVERYONE` (`ВСЕМ` in Russian mode). Recommendations: strong passwords, `ufw`, a real SSL certificate, log monitoring.
 
 ### E. Permissions by role
 
@@ -473,6 +476,7 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 
 | Variable | Value | Default |
 |---|---|---|
+| `LANG_UI` | `en` / `ru` (message language) | saved choice; first run asks; without a TTY: from system `$LANG` |
 | `NETWORK_MODE` | `local` / `private` / `public` | interactive choice; without a TTY: `local` |
 | `ACCESS_POLICY` | `list` / `all` (for `public`) | interactive choice |
 | `LISTEN_ADDR` | comma-separated IPs or `*` | auto-selected from detected addresses |
@@ -492,7 +496,7 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 | Path | Purpose |
 |---|---|
 | `/etc/postgresql/<version>/main/conf.d/99-pgmgr.conf` | Server-specific settings (managed by the script) |
-| `/etc/pgmgr/pgmgr.conf` | Saved network mode, policy, clients, port, server role |
+| `/etc/pgmgr/pgmgr.conf` | Saved language, network mode, policy, clients, port, server role |
 | `/etc/postgresql/<version>/main/pg_hba.conf` | Access rules; the script's lines are tagged `# pgmgr:<db>:<user>` |
 | `/etc/postgresql/<version>/main/pg_hba.conf.pgmgr.orig` | Copy of the original before the first edit |
 | `/usr/local/sbin/pgmgr-backup`, `/etc/cron.d/pgmgr-backup` | Backup script and schedule |
