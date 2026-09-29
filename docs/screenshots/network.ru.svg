@@ -67,7 +67,7 @@
 <text x="51.6" y="498.7" fill="#a6e3a1" font-weight="bold" textLength="310.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Сервер PostgreSQL настроен и запущен.</text>
 <text x="664.8" y="498.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="517.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="517.7" fill="#cdd6f4" opacity="0.6" textLength="478.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Управление БД и пользователями: sudo ./pg_server_setup.sh</text>
+<text x="51.6" y="517.7" fill="#cdd6f4" opacity="0.6" textLength="554.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Дальше откроется меню управления. Позже: sudo ./pg_server_setup.sh</text>
 <text x="664.8" y="517.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="536.7" fill="#a6e3a1" font-weight="bold" textLength="638.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰──────────────────────────────────────────────────────────────────────────╯</text>
 </g></svg>

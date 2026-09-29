@@ -16,7 +16,7 @@
 <text x="60.0" y="194.7" fill="#f9e2af" font-weight="bold" textLength="193.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Возобновление настройки</text>
 <text x="261.6" y="194.7" fill="#f9e2af" font-weight="bold" textLength="411.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">────────────────────────────────────────────────╮</text>
 <text x="34.8" y="213.7" fill="#f9e2af" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="43.2" y="213.7" fill="#cdd6f4" textLength="621.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Предыдущий запуск setup не был завершён (остановка на шаге 5 из 8).      </text>
+<text x="43.2" y="213.7" fill="#cdd6f4" textLength="621.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Предыдущий запуск не завершён (остановка на шаге 5 из 8).                </text>
 <text x="664.8" y="213.7" fill="#f9e2af" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="232.7" fill="#f9e2af" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="43.2" y="232.7" fill="#cdd6f4" textLength="621.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Проверяю, что уже сделано, пропускаю выполненное и продолжаю.            </text>

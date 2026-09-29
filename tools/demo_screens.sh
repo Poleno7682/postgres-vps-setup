@@ -71,7 +71,7 @@ screen_resume() {
   screen_begin "$(cmd_title setup)"
   echo
   box_top "$(L "Возобновление настройки" "Resuming setup")" "$C_YELLOW"
-  box_row "$(L "Предыдущий запуск setup не был завершён (остановка на шаге 5 из 8)." "The previous setup run did not finish (stopped at step 5 of 8).")"
+  box_row "$(L "Предыдущий запуск не завершён (остановка на шаге 5 из 8)." "The previous run did not finish (stopped at step 5 of 8).")"
   box_row "$(L "Проверяю, что уже сделано, пропускаю выполненное и продолжаю." "Checking what is already done, skipping it, and continuing.")"
   box_bottom
   step_header 2 8 "$(L "Установка и запуск PostgreSQL" "PostgreSQL installation and startup")"
@@ -95,7 +95,7 @@ screen_network() {
   echo
   box_top "$(L "Готово" "Done")" "$C_GREEN"
   box_row "$(L "Сервер PostgreSQL настроен и запущен." "The PostgreSQL server is set up and running.")" "$C_GREEN$C_BOLD"
-  box_row "$(L "Управление БД и пользователями: sudo ./pg_server_setup.sh" "Manage databases and users: sudo ./pg_server_setup.sh")" "$C_DIM"
+  box_row "$(L "Дальше откроется меню управления. Позже: sudo ./pg_server_setup.sh" "The management menu opens next. Later: sudo ./pg_server_setup.sh")" "$C_DIM"
   box_bottom
 }
 

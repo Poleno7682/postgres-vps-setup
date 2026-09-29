@@ -1705,14 +1705,28 @@ cmd_analyze() {
 }
 
 cmd_setup() {
-  local total="$SETUP_TOTAL" prev last
+  local total="$SETUP_TOTAL" prev last a recheck=0
   require_root
+  for a in "$@"; do
+    case "$a" in --recheck|--force) recheck=1 ;; esac
+  done
   prev="$(state_get SETUP_STATUS)"
   last="$(state_get SETUP_LAST_STEP)"
+
+  # Already configured and running interactively: go straight to the management menu.
+  if [[ "$recheck" == 0 && "$prev" == complete && "$INTERACTIVE" == 1 && "$ASSUME_YES" != 1 && -z "${PGMGR_FROM_MENU:-}" ]]; then
+    detect_cluster
+    if [[ -n "$PG_VER" ]]; then
+      info "$(L "Сервер уже настроен — открываю меню управления. Полная повторная проверка: пункт «Первичная настройка / проверка» или '$SELF setup --recheck'." "The server is already set up — opening the management menu. For a full re-check use the \"Initial setup / re-check\" item or '$SELF setup --recheck'.")"
+      sleep 1
+      menu
+      return 0
+    fi
+  fi
   if [[ "$prev" == interrupted || "$prev" == running ]]; then
     echo
     box_top "$(L "Возобновление настройки" "Resuming setup")" "$C_YELLOW"
-    box_row "$(L "Предыдущий запуск setup не был завершён (остановка на шаге ${last:-?} из ${total})." "The previous setup run did not finish (stopped at step ${last:-?} of ${total}).")"
+    box_row "$(L "Предыдущий запуск не завершён (остановка на шаге ${last:-?} из ${total})." "The previous run did not finish (stopped at step ${last:-?} of ${total}).")"
     box_row "$(L "Проверяю, что уже сделано, пропускаю выполненное и продолжаю." "Checking what is already done, skipping it, and continuing.")"
     box_bottom
   fi
@@ -1776,17 +1790,30 @@ cmd_setup() {
   echo
   box_top "$(L "Готово" "Done")" "$C_GREEN"
   box_row "$(L "Сервер PostgreSQL настроен и запущен." "The PostgreSQL server is set up and running.")" "$C_GREEN$C_BOLD"
-  box_row "$(L "Управление БД и пользователями: sudo $SELF" "Manage databases and users: sudo $SELF")" "$C_DIM"
+  box_row "$(L "Дальше откроется меню управления. Позже: sudo $SELF" "The management menu opens next. Later: sudo $SELF")" "$C_DIM"
   box_bottom
   SETUP_ACTIVE=0
   state_set SETUP_STATUS complete
   state_set SETUP_LAST_STEP "$total"
 
-  if [[ -t 0 && "$ASSUME_YES" != 1 ]] \
-     && [[ "$(psql_val "SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'")" == 0 ]]; then
-    if confirm "$(L "Создать первую БД и её владельца сейчас?" "Create the first database and its owner now?")"; then
-      cmd_db_create
-      return 0
+  if [[ "$INTERACTIVE" == 1 && "$ASSUME_YES" != 1 && -z "${PGMGR_FROM_MENU:-}" ]]; then
+    if [[ "$(psql_val "SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'")" == 0 ]]; then
+      if confirm "$(L "Создать первую БД и её владельца сейчас?" "Create the first database and its owner now?")"; then
+        cmd_db_create
+      fi
+    fi
+    # keep the last screen (e.g. the password) visible until the user is ready
+    echo
+    read -r -p "  $(L "Нажмите Enter, чтобы открыть меню управления…" "Press Enter to open the management menu…")" _ || true
+    menu
+    return 0
+  fi
+  if [[ -t 0 && "$ASSUME_YES" != 1 && -z "${PGMGR_FROM_MENU:-}" ]]; then
+    if [[ "$(psql_val "SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'")" == 0 ]]; then
+      if confirm "$(L "Создать первую БД и её владельца сейчас?" "Create the first database and its owner now?")"; then
+        cmd_db_create
+        return 0
+      fi
     fi
   fi
   log "$(L "Дальше: $SELF db-create <имя_бд> [владелец] [IP-клиента]" "Next: $SELF db-create <db_name> [owner] [client-ip]")"
@@ -2095,7 +2122,8 @@ usage() {
     cat <<EOF
 Usage: $(basename "$SELF") [-y] <command> [arguments]
 
-  setup                                  analyse the server, install, network mode, tuning (idempotent)
+  setup       [--recheck]                analyse the server, install, network mode, tuning (idempotent);
+                                         on an already configured server it opens the menu (--recheck forces a full check)
   analyze                                cores / RAM / disk report
   network                                change network mode: local | private | public (list/all)
   port        [N|default|random]         change the port: 5432, custom or random free
@@ -2128,7 +2156,8 @@ EOF
     cat <<EOF
 Использование: $(basename "$SELF") [-y] <команда> [аргументы]
 
-  setup                                  анализ сервера, установка, режим сети, тюнинг (идемпотентно)
+  setup       [--recheck]                анализ сервера, установка, режим сети, тюнинг (идемпотентно);
+                                         на уже настроенном сервере открывает меню (--recheck — полная проверка)
   analyze                                анализ ядер / RAM / диска
   network                                сменить режим сети: local | private | public (list/all)
   port        [N|default|random]         сменить порт: 5432, свой или случайный свободный
@@ -2252,7 +2281,11 @@ menu() {
       sleep 1
       continue
     fi
-    "$SELF" "$cmd" || true
+    if [[ "$cmd" == setup ]]; then
+      PGMGR_FROM_MENU=1 "$SELF" setup --recheck || true
+    else
+      PGMGR_FROM_MENU=1 "$SELF" "$cmd" || true
+    fi
     if [[ "$cmd" == lang ]]; then
       LANG_UI="$(state_get LANG_UI)"
       LANG_UI="${LANG_UI:-$(default_lang)}"

@@ -16,7 +16,7 @@
 <text x="60.0" y="194.7" fill="#f9e2af" font-weight="bold" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Resuming setup</text>
 <text x="186.0" y="194.7" fill="#f9e2af" font-weight="bold" textLength="487.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────╮</text>
 <text x="34.8" y="213.7" fill="#f9e2af" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="43.2" y="213.7" fill="#cdd6f4" textLength="621.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> The previous setup run did not finish (stopped at step 5 of 8).          </text>
+<text x="43.2" y="213.7" fill="#cdd6f4" textLength="621.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> The previous run did not finish (stopped at step 5 of 8).                </text>
 <text x="664.8" y="213.7" fill="#f9e2af" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="232.7" fill="#f9e2af" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="43.2" y="232.7" fill="#cdd6f4" textLength="621.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Checking what is already done, skipping it, and continuing.              </text>

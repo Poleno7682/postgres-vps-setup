@@ -165,7 +165,8 @@ Step by step, the script will:
 4. ask for the PostgreSQL **port** (standard 5432, custom, or a random free one) and whether the server is **behind NAT** with port forwarding (external port);
 5. tune PostgreSQL for your hardware and restart the service;
 6. configure swap and backups, and offer to enable the `ufw` firewall;
-7. offer to create the first database and its owner right away and print the connection details (IP, port, database, login, password).
+7. offer to create the first database and its owner right away and print the connection details (IP, port, database, login, password);
+8. after you press `Enter`, **open the management menu automatically**.
 
 #### 3. Create databases and users
 
@@ -388,7 +389,7 @@ Arguments you do not pass are requested interactively. The `-y` flag disables co
 
 | Command | Description |
 |---|---|
-| `setup` | Analysis, install, network mode, tuning, swap, backups (idempotent) |
+| `setup [--recheck]` | Analysis, install, network mode, tuning, swap, backups (idempotent). Opens the menu when finished; on an **already configured** server it opens the menu right away, and `--recheck` forces the full check |
 | `analyze` | Report on cores, RAM, disk |
 | `network` | Change the network mode (`local` / `private` / `public`) |
 | `port [N\|default\|random]` | Change the PostgreSQL port: 5432, custom, or random free |
@@ -657,7 +658,7 @@ Ubuntu 22.04 / 24.04 and Debian 11 / 12 / 13 with `systemd` and `apt`. CentOS/RH
 <details>
 <summary><b>Can I run `setup` again? Will anything break?</b></summary>
 
-Yes. The script is idempotent: it checks the real state (packages, repository, cluster, service, settings file, swap, backup) and does only what is missing. Databases, users and data are untouched. Performance settings are recalculated for the current hardware, so re-running `setup` is useful after adding RAM.
+Yes. The script is idempotent: it checks the real state (packages, repository, cluster, service, settings file, swap, backup) and does only what is missing. Databases, users and data are untouched. Performance settings are recalculated for the current hardware, so re-running `setup` is useful after adding RAM. Note: on an already configured server an interactive `setup` **opens the management menu right away**; for a full check run `sudo ./pg_server_setup.sh setup --recheck` (or pick the first menu item). Running with `-y` or without a terminal always performs the full check.
 
 </details>
 

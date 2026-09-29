@@ -67,7 +67,7 @@
 <text x="51.6" y="498.7" fill="#a6e3a1" font-weight="bold" textLength="369.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">The PostgreSQL server is set up and running.</text>
 <text x="664.8" y="498.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="517.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
-<text x="51.6" y="517.7" fill="#cdd6f4" opacity="0.6" textLength="445.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Manage databases and users: sudo ./pg_server_setup.sh</text>
+<text x="51.6" y="517.7" fill="#cdd6f4" opacity="0.6" textLength="537.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">The management menu opens next. Later: sudo ./pg_server_setup.sh</text>
 <text x="664.8" y="517.7" fill="#a6e3a1" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="536.7" fill="#a6e3a1" font-weight="bold" textLength="638.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╰──────────────────────────────────────────────────────────────────────────╯</text>
 </g></svg>
