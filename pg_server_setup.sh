@@ -55,6 +55,7 @@ readonly BACKUP_CRON="/etc/cron.d/pgmgr-backup"
 readonly STATE_DIR="/etc/pgmgr"
 readonly STATE_FILE="${STATE_DIR}/pgmgr.conf"
 readonly MIN_PASSWORD_LEN=6
+readonly RC_BACK=64   # a command was cancelled with "0": the menu returns without a pause
 
 PG_VERSION="${PG_VERSION:-17}"
 MAX_CONNECTIONS="${MAX_CONNECTIONS:-}"      # empty = auto by resources
@@ -332,10 +333,26 @@ require_root() {
   [[ $EUID -eq 0 ]] || die "$(L "Запустите от root: sudo $SELF" "Run as root: sudo $SELF")"
 }
 
+# "0" at a prompt cancels the current command and goes back one level.
+# ASK_ZERO_OK=1 (per call) makes 0 an ordinary answer; ASK_NO_HINT=1 hides the hint.
+cancel_back() {
+  info "$(L "Отменено — возврат назад" "Cancelled — going back")"
+  if [[ "$SETUP_ACTIVE" == 1 ]]; then
+    state_set SETUP_STATUS interrupted
+    SETUP_ACTIVE=0
+  fi
+  if [[ -n "${PGMGR_FROM_MENU:-}" ]]; then exit "$RC_BACK"; fi
+  exit 0
+}
+
+is_tty() { [[ -t 0 ]]; }
+
 ask() { # ask VAR "question" [default]
-  local __var="$1" __prompt="$2" __def="${3:-}" __ans=""
-  [[ -t 0 ]] || die "$(L "Не хватает аргумента: $__prompt (нет интерактивного ввода)" "Missing argument: $__prompt (no interactive input)")"
-  read -r -p "  ${C_CYAN}${I_Q}${C_RESET} ${__prompt}${__def:+ ${C_DIM}[$__def]${C_RESET}}: " __ans || die "$(L "Ввод прерван" "Input interrupted")"
+  local __var="$1" __prompt="$2" __def="${3:-}" __ans="" __hint=""
+  is_tty || die "$(L "Не хватает аргумента: $__prompt (нет интерактивного ввода)" "Missing argument: $__prompt (no interactive input)")"
+  if [[ -z "${ASK_ZERO_OK:-}" && -z "${ASK_NO_HINT:-}" ]]; then __hint=" ${C_DIM}($(L "0 — назад" "0 = back"))${C_RESET}"; fi
+  read -r -p "  ${C_CYAN}${I_Q}${C_RESET} ${__prompt}${__def:+ ${C_DIM}[$__def]${C_RESET}}${__hint}: " __ans || die "$(L "Ввод прерван" "Input interrupted")"
+  if [[ "$__ans" == 0 && -z "${ASK_ZERO_OK:-}" ]]; then cancel_back; fi
   printf -v "$__var" '%s' "${__ans:-$__def}"
 }
 
@@ -347,8 +364,9 @@ pick() { # pick VAR "title" default_number option1 option2 ... -> VAR = number
     printf '    %s%2d%s  %s\n' "$C_CYAN" "$__i" "$C_RESET" "$__o"
     __i=$(( __i + 1 ))
   done
+  printf '\n    %s%2d%s  %s\n' "$C_RED$C_BOLD" 0 "$C_RESET" "$(L "Назад" "Back")"
   while true; do
-    ask __pa "$(L "Выбор" "Choice")" "$__def"
+    ASK_NO_HINT=1 ask __pa "$(L "Выбор" "Choice")" "$__def"
     if [[ "$__pa" =~ ^[0-9]+$ ]] && (( __pa >= 1 && __pa <= $# )); then
       printf -v "$__var" '%s' "$__pa"
       return 0
@@ -1243,7 +1261,8 @@ choose_password() { # choose_password "for whom"
     return 0
   fi
   while true; do
-    read -rs -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Введите пароль" "Enter the password"): " p1 || die "$(L "Ввод прерван" "Input interrupted")"; echo
+    read -rs -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Введите пароль" "Enter the password") ${C_DIM}($(L "0 — назад" "0 = back"))${C_RESET}: " p1 || die "$(L "Ввод прерван" "Input interrupted")"; echo
+    if [[ "$p1" == 0 ]]; then cancel_back; fi
     problem="$(password_problem "$p1")"
     if [[ -n "$problem" ]]; then warn "$problem"; continue; fi
     read -rs -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Повторите пароль" "Repeat the password"): " p2 || die "$(L "Ввод прерван" "Input interrupted")"; echo
@@ -2000,7 +2019,7 @@ cmd_user_limit() {
   ensure_running
   local u="${1:-}" n="${2:-}"
   if [[ -z "$u" ]]; then ask u "$(L "Пользователь" "User")"; fi
-  if [[ -z "$n" ]]; then ask n "$(L "Лимит одновременных подключений (-1 — без лимита)" "Concurrent connection limit (-1 = unlimited)")" "-1"; fi
+  if [[ -z "$n" ]]; then ASK_ZERO_OK=1 ask n "$(L "Лимит одновременных подключений (-1 — без лимита)" "Concurrent connection limit (-1 = unlimited)")" "-1"; fi
   validate_user "$u"
   [[ "$n" =~ ^-?[0-9]+$ ]] || die "$(L "Лимит должен быть целым числом" "The limit must be an integer")"
   role_exists "$u" || die "$(L "Пользователь '$u' не существует" "User '$u' does not exist")"
@@ -2521,7 +2540,9 @@ menu_valid() { # menu_valid choice max  (1..max)
 }
 
 menu_run() { # run a command in a separate process (own screen), then wait for Enter
-  PGMGR_FROM_MENU=1 "$SELF" "$@" || true
+  local rc=0
+  PGMGR_FROM_MENU=1 "$SELF" "$@" || rc=$?
+  if (( rc == RC_BACK )); then return 0; fi   # cancelled with 0: straight back to the menu
   pause_return
 }
 
@@ -2702,8 +2723,8 @@ screen_database() { # screen_database db
       3) if pick_db_user "$db" "$(L "Удаление пользователя" "Delete a user")"; then delete_db_user "$db" "$PICKED_USER"; fi ;;
       4)
         new=""
-        ask new "$(L "Новое имя БД" "New database name")" ""
-        if [[ -n "$new" ]]; then
+        ASK_ZERO_OK=1 ask new "$(L "Новое имя БД (0 — назад)" "New database name (0 = back)")" ""
+        if [[ -n "$new" && "$new" != 0 ]]; then
           menu_run db-rename "$db" "$new"
           if db_exists "$new"; then db="$new"; fi
         fi
@@ -2783,8 +2804,8 @@ screen_user() { # screen_user db user
       5) menu_run user-limit "$u" ;;
       6)
         new=""
-        ask new "$(L "Новое имя пользователя" "New user name")" ""
-        if [[ -n "$new" ]]; then
+        ASK_ZERO_OK=1 ask new "$(L "Новое имя пользователя (0 — назад)" "New user name (0 = back)")" ""
+        if [[ -n "$new" && "$new" != 0 ]]; then
           menu_run user-rename "$u" "$new"
           if role_exists "$new"; then u="$new"; fi
         fi
@@ -2834,13 +2855,12 @@ menu() {
     fi
     case "$cmd" in
       @databases) screen_databases ;;
-      setup)      PGMGR_FROM_MENU=1 "$SELF" setup --recheck || true; pause_return ;;
+      setup)      menu_run setup --recheck ;;
       status)     PGMGR_FROM_MENU=1 "$SELF" status || true ;;
       lang)
-        PGMGR_FROM_MENU=1 "$SELF" lang || true
+        menu_run lang
         LANG_UI="$(state_get LANG_UI)"
         LANG_UI="${LANG_UI:-$(default_lang)}"
-        pause_return
         ;;
       *)          menu_run "$cmd" ;;
     esac
