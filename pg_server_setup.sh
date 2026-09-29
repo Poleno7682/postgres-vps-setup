@@ -44,6 +44,7 @@
 #   PGMGR_PASSWORD=...  (ready-made password for the created/changed user)
 
 set -Eeuo pipefail
+shopt -s extglob
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 readonly SELF
@@ -214,6 +215,14 @@ box_row() { # box_row "plain text" [colour]
   pad=$(( BOX_W - 4 - ${#t} ))
   if (( pad < 0 )); then pad=0; fi
   printf '  %s%s%s %s%s%s%*s %s%s%s\n' "$BC" "$B_V" "$C_RESET" "$c" "$t" "$C_RESET" "$pad" "" "$BC" "$B_V" "$C_RESET"
+}
+
+box_raw() { # box_raw "text that already contains colour codes"
+  local t="$1" plain pad
+  plain="${t//$'\033'\[+([0-9;])m/}"
+  pad=$(( BOX_W - 4 - ${#plain} ))
+  if (( pad < 0 )); then pad=0; fi
+  printf '  %s%s%s %s%*s %s%s%s\n' "$BC" "$B_V" "$C_RESET" "$t" "$pad" "" "$BC" "$B_V" "$C_RESET"
 }
 
 box_kv() { # box_kv "Label" "Value" [value colour]
@@ -511,7 +520,7 @@ cmd_lang() { # cmd_lang [en|ru]
 
 psql_admin() {
   runuser -u postgres -- env PGOPTIONS='-c client_min_messages=warning' \
-    psql -X -q -v ON_ERROR_STOP=1 "$@"
+    psql -X -q -P pager=off -v ON_ERROR_STOP=1 "$@"
 }
 
 psql_val() { # psql_val "SQL" [db]
@@ -2085,27 +2094,261 @@ cmd_list() {
   print_network_summary
 }
 
+# ---- Server status: live load dashboard ------------------------------------------
+
+HIST_N=14                     # points kept for every sparkline
+H_CPU=(); H_LOAD=(); H_RAM=(); H_CONN=(); H_TPS=(); H_RX=(); H_TX=()
+M_CPU=0; M_LOAD1="0.00"; M_LOAD5="0.00"; M_LOAD15="0.00"; M_LOADPCT=0
+M_RAM_PCT=0; M_RAM_USED_MB=0; M_RAM_TOTAL_MB=0
+M_SWAP_PCT=0; M_SWAP_USED_MB=0; M_SWAP_TOTAL_MB=0
+M_DISK_PCT=0; M_DISK_USED_GB=0; M_DISK_TOTAL_GB=0
+M_RX=0; M_TX=0
+M_PG_UP=0; M_CONN=0; M_ACTIVE=0; M_MAXCONN=100; M_TPS=0; M_HIT=100; M_SIZE="-"; M_UPTIME=0; M_DBS=0
+S_VERSION=""; S_UFW=""; S_BACKUP=""; S_SVC_STATE=""
+CPU_PREV_T=0; CPU_PREV_I=0; NET_IF=""; NET_PREV_RX=0; NET_PREV_TX=0; NET_PREV_US=0
+PG_PREV_X=0; PG_PREV_US=0
+
+now_us() {
+  if [[ -n "${EPOCHREALTIME:-}" ]]; then echo "${EPOCHREALTIME/./}"; else echo $(( $(date +%s) * 1000000 )); fi
+}
+
+hist_push() { # hist_push ARRAY value
+  local -n __h="$1"
+  __h+=("$2")
+  if (( ${#__h[@]} > HIST_N )); then __h=("${__h[@]: -HIST_N}"); fi
+}
+
+# Sparkline of the last HIST_N values (right aligned). spark ARRAY [fixed_max]
+spark() {
+  local -n __a="$1"
+  local fixed="${2:-0}" max=0 v i out="" idx pad
+  local -a ch
+  if [[ "$UTF" == 1 ]]; then ch=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █); else ch=(_ . - = + '*' '#' '@'); fi
+  for v in "${__a[@]}"; do
+    if (( v > max )); then max=$v; fi
+  done
+  if (( fixed > 0 )); then max=$fixed; fi
+  if (( max < 1 )); then max=1; fi
+  pad=$(( HIST_N - ${#__a[@]} ))
+  if (( pad > 0 )); then out="$(rep ' ' "$pad")"; fi
+  for v in "${__a[@]}"; do
+    idx=$(( v * 7 / max ))
+    if (( idx > 7 )); then idx=7; fi
+    if (( idx < 0 )); then idx=0; fi
+    out+="${ch[idx]}"
+  done
+  printf '%s' "$out"
+}
+
+# Colour by load: low = green, high = red (invert=1: high = good, e.g. cache hit ratio)
+level_color() { # level_color percent [invert]
+  local p="$1" inv="${2:-0}"
+  if [[ "$inv" == 1 ]]; then
+    if (( p >= 95 )); then printf '%s' "$C_GREEN"; elif (( p >= 85 )); then printf '%s' "$C_YELLOW"; else printf '%s' "$C_RED"; fi
+  else
+    if (( p < 60 )); then printf '%s' "$C_GREEN"; elif (( p < 85 )); then printf '%s' "$C_YELLOW"; else printf '%s' "$C_RED"; fi
+  fi
+}
+
+gauge() { # gauge percent width [invert]
+  local pct="$1" w="$2" inv="${3:-0}" filled full empty
+  if (( pct < 0 )); then pct=0; fi
+  if (( pct > 100 )); then pct=100; fi
+  filled=$(( pct * w / 100 ))
+  if [[ "$UTF" == 1 ]]; then full="█"; empty="░"; else full="#"; empty="."; fi
+  printf '%s%s%s%s%s%s' "$(level_color "$pct" "$inv")" "$(rep "$full" "$filled")" "$C_RESET" "$C_DIM" "$(rep "$empty" $(( w - filled )))" "$C_RESET"
+}
+
+# One dashboard row: label, optional gauge, extra text, optional sparkline.
+dash_row() { # dash_row "label" percent(-1 = no gauge) "extra" [ARRAY [spark_max [invert]]]
+  local label="$1" pct="$2" extra="$3" arr="${4:-}" smax="${5:-0}" inv="${6:-0}" g pt sp=""
+  if (( pct >= 0 )); then
+    g="$(gauge "$pct" 16 "$inv")"
+    pt="$(printf '%3d%%' "$pct")"
+  else
+    g="$(rep ' ' 16)"
+    pt="    "
+  fi
+  if [[ -n "$arr" ]]; then sp="$(spark "$arr" "$smax")"; else sp="$(rep ' ' "$HIST_N")"; fi
+  box_raw "$(padr "$label" 12) $g $pt  ${C_DIM}$(padr "$extra" 18)${C_RESET} ${C_CYAN}${sp}${C_RESET}"
+}
+
+fmt_uptime() { # seconds -> 3d 4h 12m
+  local s="$1" d h m
+  d=$(( s / 86400 )); h=$(( s % 86400 / 3600 )); m=$(( s % 3600 / 60 ))
+  if (( d > 0 )); then printf '%s%s %s%s %s%s' "$d" "$(L "д" "d")" "$h" "$(L "ч" "h")" "$m" "$(L "м" "m")"
+  elif (( h > 0 )); then printf '%s%s %s%s' "$h" "$(L "ч" "h")" "$m" "$(L "м" "m")"
+  else printf '%s%s' "$m" "$(L "м" "m")"; fi
+}
+
+fmt_rate() { # KB/s -> "12 KB/s" or "1.4 MB/s"
+  local k="$1"
+  if (( k >= 1024 )); then printf '%s.%s MB/s' $(( k / 1024 )) $(( k % 1024 * 10 / 1024 )); else printf '%s KB/s' "$k"; fi
+}
+
+# ---- samplers -------------------------------------------------------------------
+
+sample_system() {
+  local u n s i io irq sirq st t dt di l1 l5 l15 mt ma st_t st_f now rx tx dtu iface
+  # CPU
+  read -r _ u n s i io irq sirq st _ < /proc/stat
+  t=$(( u + n + s + i + io + irq + sirq + st ))
+  dt=$(( t - CPU_PREV_T )); di=$(( i + io - CPU_PREV_I ))
+  if (( dt > 0 && CPU_PREV_T > 0 )); then M_CPU=$(( (dt - di) * 100 / dt )); fi
+  CPU_PREV_T=$t; CPU_PREV_I=$(( i + io ))
+  # load average (relative to cores)
+  read -r l1 l5 l15 _ < /proc/loadavg
+  M_LOAD1="$l1"; M_LOAD5="$l5"; M_LOAD15="$l15"
+  M_LOADPCT=$(( (10#${l1%.*} * 100 + 10#${l1#*.}) / (HW_CORES > 0 ? HW_CORES : 1) ))
+  # memory and swap
+  read -r mt ma st_t st_f < <(awk '/^MemTotal:/{a=$2} /^MemAvailable:/{b=$2} /^SwapTotal:/{c=$2} /^SwapFree:/{d=$2} END{print a, b, c, d}' /proc/meminfo)
+  M_RAM_TOTAL_MB=$(( mt / 1024 )); M_RAM_USED_MB=$(( (mt - ma) / 1024 ))
+  M_RAM_PCT=$(( mt > 0 ? (mt - ma) * 100 / mt : 0 ))
+  M_SWAP_TOTAL_MB=$(( st_t / 1024 )); M_SWAP_USED_MB=$(( (st_t - st_f) / 1024 ))
+  M_SWAP_PCT=$(( st_t > 0 ? (st_t - st_f) * 100 / st_t : 0 ))
+  # disk of the data directory
+  read -r dt di < <(df -k --output=size,used "${HW_DISK_PATH:-/}" 2>/dev/null | awk 'NR==2{print $1, $2}')
+  dt="${dt//[!0-9]/}"; di="${di//[!0-9]/}"; dt="${dt:-0}"; di="${di:-0}"
+  M_DISK_TOTAL_GB=$(( dt / 1048576 )); M_DISK_USED_GB=$(( di / 1048576 ))
+  M_DISK_PCT=$(( dt > 0 ? di * 100 / dt : 0 ))
+  # network (default route interface)
+  if [[ -z "$NET_IF" ]]; then
+    iface="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit }}')"
+    NET_IF="${iface:-none}"
+  fi
+  if [[ -r "/sys/class/net/${NET_IF}/statistics/rx_bytes" ]]; then
+    now="$(now_us)"
+    rx="$(< "/sys/class/net/${NET_IF}/statistics/rx_bytes")"
+    tx="$(< "/sys/class/net/${NET_IF}/statistics/tx_bytes")"
+    dtu=$(( now - NET_PREV_US ))
+    if (( NET_PREV_US > 0 && dtu > 0 )); then
+      M_RX=$(( (rx - NET_PREV_RX) * 1000000 / dtu / 1024 ))
+      M_TX=$(( (tx - NET_PREV_TX) * 1000000 / dtu / 1024 ))
+    fi
+    NET_PREV_RX=$rx; NET_PREV_TX=$tx; NET_PREV_US=$now
+  fi
+  hist_push H_CPU "$M_CPU"
+  hist_push H_LOAD "$(( M_LOADPCT > 100 ? 100 : M_LOADPCT ))"
+  hist_push H_RAM "$M_RAM_PCT"
+  hist_push H_RX "$M_RX"
+  hist_push H_TX "$M_TX"
+}
+
+sample_postgres() {
+  local line conn active maxc xacts hit size up dbs now dtu
+  M_PG_UP=0
+  if [[ -z "$PG_VER" ]] || ! systemctl is-active --quiet "$SVC" 2>/dev/null; then return 0; fi
+  line="$(psql_admin -At -F '|' -d postgres -c "SELECT (SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend'), (SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' AND state='active'), current_setting('max_connections')::int, (SELECT COALESCE(sum(xact_commit + xact_rollback), 0) FROM pg_stat_database), (SELECT COALESCE(round(100.0 * sum(blks_hit) / NULLIF(sum(blks_hit) + sum(blks_read), 0)), 100) FROM pg_stat_database), (SELECT pg_size_pretty(COALESCE(sum(pg_database_size(datname)), 0)) FROM pg_database WHERE NOT datistemplate), EXTRACT(EPOCH FROM now() - pg_postmaster_start_time())::bigint, (SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres')" 2>/dev/null || true)"
+  [[ -n "$line" ]] || return 0
+  IFS='|' read -r conn active maxc xacts hit size up dbs <<<"$line"
+  M_PG_UP=1; M_CONN="$conn"; M_ACTIVE="$active"; M_MAXCONN="$maxc"; M_HIT="$hit"; M_SIZE="$size"; M_UPTIME="$up"; M_DBS="$dbs"
+  now="$(now_us)"
+  dtu=$(( now - PG_PREV_US ))
+  if (( PG_PREV_US > 0 && dtu > 0 )); then M_TPS=$(( (xacts - PG_PREV_X) * 1000000 / dtu )); fi
+  PG_PREV_X="$xacts"; PG_PREV_US="$now"
+  hist_push H_CONN "$M_CONN"
+  hist_push H_TPS "$M_TPS"
+}
+
+status_static() { # slow-changing facts, collected once
+  S_VERSION=""
+  S_SVC_STATE="$(L "не установлен" "not installed")"
+  if [[ -n "$PG_VER" ]]; then
+    if systemctl is-active --quiet "$SVC" 2>/dev/null; then
+      S_SVC_STATE="$(L "работает" "running")"
+      S_VERSION="$(psql_val 'SHOW server_version' 2>/dev/null || true)"
+      S_VERSION="${S_VERSION%% *}"
+    else
+      S_SVC_STATE="$(L "остановлен" "stopped")"
+    fi
+  fi
+  if ufw_active; then S_UFW="$(L "включён" "enabled")"; else S_UFW="$(L "выключен" "disabled")"; fi
+  S_BACKUP="$(find "$BACKUP_DIR" -name '*.dump' -printf '%TY-%Tm-%Td %TH:%TM\n' 2>/dev/null | sort | tail -n1 || true)"
+  S_BACKUP="${S_BACKUP:-$(L "нет" "none")}"
+}
+
+# ---- rendering ------------------------------------------------------------------
+
+render_status_frame() { # render_status_frame [live]
+  local live="${1:-}" mode cport up_txt state_col conn_extra hit_int
+  mode="$(state_get NETWORK_MODE)"
+  cport="$(client_port)"
+  if [[ "$live" == live ]]; then
+    printf '\n  %s %s %s  %s%s%s\n' "$C_INV$C_CYAN" "$(L "Статус сервера" "Server status")" "$C_RESET" "$C_DIM" \
+      "$(L "$(hostname) · обновление каждые 2 с · любая клавиша — выход" "$(hostname) · refresh every 2 s · any key to exit")" "$C_RESET"
+  fi
+  echo
+  box_top "$(L "Нагрузка сервера" "Server load")" "$C_CYAN"
+  dash_row "CPU" "$M_CPU" "$(L "$HW_CORES ядер" "$HW_CORES cores")" H_CPU 100
+  dash_row "$(L "Нагрузка" "Load avg")" "$M_LOADPCT" "$M_LOAD1 $M_LOAD5 $M_LOAD15" H_LOAD 100
+  dash_row "RAM" "$M_RAM_PCT" "$(gb "$M_RAM_USED_MB") / $(gb "$M_RAM_TOTAL_MB") GB" H_RAM 100
+  dash_row "Swap" "$M_SWAP_PCT" "$(gb "$M_SWAP_USED_MB") / $(gb "$M_SWAP_TOTAL_MB") GB"
+  dash_row "$(L "Диск" "Disk")" "$M_DISK_PCT" "$M_DISK_USED_GB / $M_DISK_TOTAL_GB GB"
+  dash_row "$(L "Сеть ↓" "Net ↓")" -1 "$(fmt_rate "$M_RX")" H_RX
+  dash_row "$(L "Сеть ↑" "Net ↑")" -1 "$(fmt_rate "$M_TX")" H_TX
+  box_bottom
+
+  echo
+  if [[ "$M_PG_UP" == 1 ]]; then
+    box_top "PostgreSQL" "$C_GREEN"
+    conn_extra="$M_CONN / $M_MAXCONN · $(L "акт." "act.") $M_ACTIVE"
+    dash_row "$(L "Подключения" "Connections")" "$(( M_MAXCONN > 0 ? M_CONN * 100 / M_MAXCONN : 0 ))" "$conn_extra" H_CONN "$M_MAXCONN"
+    dash_row "$(L "Транзакции" "Transactions")" -1 "$M_TPS /s" H_TPS
+    hit_int="${M_HIT%.*}"
+    dash_row "Cache hit" "$hit_int" "$(L "попадания в кэш" "buffer cache")" "" 0 1
+    up_txt="$(fmt_uptime "$M_UPTIME")"
+    box_kv "$(L "Аптайм" "Uptime")" "$up_txt · $(L "БД" "DBs"): $M_DBS · $M_SIZE"
+    box_bottom
+  else
+    box_top "PostgreSQL" "$C_RED"
+    box_row "$(L "PostgreSQL: $S_SVC_STATE" "PostgreSQL: $S_SVC_STATE")" "$C_RED$C_BOLD"
+    box_bottom
+  fi
+
+  echo
+  box_top "$(L "Сервис и защита" "Service and protection")" "$C_MAGENTA"
+  box_kv "$(L "Версия" "Version")" "${S_VERSION:-—} · ${PG_CLUSTER:-main} · $S_SVC_STATE"
+  box_kv "$(L "Подключение" "Connect")" "$(connect_host):${cport} · TCP · ${mode:-—}"
+  box_kv "$(L "Файрвол ufw" "Firewall ufw")" "$S_UFW"
+  box_kv "$(L "Посл. бэкап" "Last backup")" "$S_BACKUP"
+  box_bottom
+}
+
+status_prime() { # first samples so rates have a baseline, then a short warm-up history
+  local i
+  sample_system
+  sleep 0.4
+  for i in 1 2 3; do
+    sample_system
+    sample_postgres
+    sleep 0.4
+  done
+}
+
+status_live() {
+  local frame k
+  status_prime
+  printf '\033[?25l\033[H\033[2J'
+  while true; do
+    sample_system
+    sample_postgres
+    frame="$(render_status_frame live)"
+    printf '\033[H%s\n\033[J' "$frame"
+    if read -rs -n1 -t 2 k; then break; fi
+  done
+  printf '\033[?25h'
+}
+
 cmd_status() {
   detect_cluster
-  if [[ -z "$PG_VER" ]]; then
-    warn "$(L "PostgreSQL не установлен. Выполните: $SELF setup" "PostgreSQL is not installed. Run: $SELF setup")"
+  status_static
+  if [[ "$INTERACTIVE" == 1 && "$ASSUME_YES" != 1 ]]; then
+    status_live
     return 0
   fi
-  section "$(L "Сервис" "Service")"
-  pg_lsclusters
-  if systemctl is-active --quiet "$SVC"; then
-    log "$SVC: active"
-    psql_admin -d postgres -c "SELECT version()"
-    psql_admin -d postgres -c "SELECT current_setting('listen_addresses') AS listen, current_setting('max_connections') AS max_conn, (SELECT count(*) FROM pg_stat_activity) AS connections, current_setting('shared_buffers') AS shared_buffers, current_setting('ssl') AS ssl"
-  else
-    warn "$(L "$SVC: НЕ запущен" "$SVC: NOT running")"
-  fi
-  analyze_hardware
-  print_hw_report
+  status_prime
+  render_status_frame
   print_network_summary
-  section "$(L "Бэкап и файрвол" "Backup and firewall")"
-  find "$BACKUP_DIR" -name '*.dump' -printf '%TY-%Tm-%Td %TH:%TM  %p\n' 2>/dev/null | sort | tail -n1 | sed 's/^/  /' || true
-  if ufw_active; then log "$(L "ufw: активен" "ufw: active")"; else warn "$(L "ufw: не активен" "ufw: not active")"; fi
 }
 
 cmd_backup_now() {
@@ -2569,6 +2812,7 @@ menu() {
     case "$cmd" in
       @databases) screen_databases ;;
       setup)      PGMGR_FROM_MENU=1 "$SELF" setup --recheck || true; pause_return ;;
+      status)     PGMGR_FROM_MENU=1 "$SELF" status || true ;;
       lang)
         PGMGR_FROM_MENU=1 "$SELF" lang || true
         LANG_UI="$(state_get LANG_UI)"
@@ -2629,6 +2873,7 @@ main() {
   init_lang
   case "$cmd" in
     menu|help|usage) ;;
+    status) if [[ "$INTERACTIVE" != 1 || "$ASSUME_YES" == 1 ]]; then screen_begin "$(cmd_title "$cmd")"; fi ;;
     *) screen_begin "$(cmd_title "$cmd")" ;;
   esac
   case "$cmd" in
