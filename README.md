@@ -6,7 +6,7 @@
 
 - [Возможности](#возможности)
 - [Требования](#требования)
-- [Быстрый старт](#быстрый-старт)
+- [Быстрый старт](#быстрый-старт) (в т.ч. [установка одной командой](#установка-одной-командой))
 - [Что делает `setup`](#что-делает-setup)
 - [Режимы сети](#режимы-сети)
 - [Модель изоляции и роли](#модель-изоляции-и-роли)
@@ -58,7 +58,42 @@
 
 ## Быстрый старт
 
-### 1. Скопируйте скрипт на сервер
+### Установка одной командой
+
+Подключитесь к серверу по SSH и выполните (под root или через `sudo`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Poleno7682/postgres-vps-setup/main/pg_server_setup.sh -o pg_server_setup.sh && chmod +x pg_server_setup.sh && sudo ./pg_server_setup.sh setup
+```
+
+Команда скачивает скрипт, делает его исполняемым и сразу запускает первичную настройку. Скрипт остаётся в текущей папке: им же потом управляются БД и пользователи (`sudo ./pg_server_setup.sh` открывает меню).
+
+Если на сервере нет `curl`, установите его (`apt-get update && apt-get install -y curl`) или используйте `wget`:
+
+```bash
+wget -qO pg_server_setup.sh https://raw.githubusercontent.com/Poleno7682/postgres-vps-setup/main/pg_server_setup.sh && chmod +x pg_server_setup.sh && sudo ./pg_server_setup.sh setup
+```
+
+Через `git`:
+
+```bash
+git clone https://github.com/Poleno7682/postgres-vps-setup.git && cd postgres-vps-setup && sudo ./pg_server_setup.sh setup
+```
+
+> Запускать скрипт как `curl ... | bash` не нужно: в интерактивном режиме он задаёт вопросы (режим сети, порт, пароль), а для этого ему нужен ввод с клавиатуры. Поэтому сначала скачивается файл, а потом запускается.
+>
+> Перед запуском под root скрипт из интернета стоит просмотреть: `less pg_server_setup.sh`. Для воспроизводимости можно закрепить конкретный коммит, подставив его хеш вместо `main` в адрес.
+
+Неинтерактивный вариант (без вопросов, параметры через переменные окружения):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Poleno7682/postgres-vps-setup/main/pg_server_setup.sh -o pg_server_setup.sh && chmod +x pg_server_setup.sh \
+  && sudo NETWORK_MODE=public ACCESS_POLICY=list ALLOWED_CIDR="203.0.113.10" DB_PORT=random ./pg_server_setup.sh -y setup
+```
+
+### Установка вручную
+
+#### 1. Скопируйте скрипт на сервер
 
 ```bash
 scp pg_server_setup.sh root@<IP_СЕРВЕРА>:/root/
@@ -72,7 +107,7 @@ chmod +x /root/pg_server_setup.sh
 sed -i 's/\r$//' /root/pg_server_setup.sh
 ```
 
-### 2. Запустите первичную настройку
+#### 2. Запустите первичную настройку
 
 ```bash
 sudo ./pg_server_setup.sh setup
@@ -88,7 +123,7 @@ sudo ./pg_server_setup.sh setup
 6. настроит swap, бэкапы и предложит включить файрвол `ufw`;
 7. предложит сразу создать первую БД и её владельца и покажет данные для подключения (IP, порт, БД, логин, пароль).
 
-### 3. Создайте БД и пользователей
+#### 3. Создайте БД и пользователей
 
 ```bash
 # БД + владелец (пароль сгенерируется или задайте свой)
@@ -115,7 +150,7 @@ sudo ./pg_server_setup.sh user-create myproject_report myproject_db readonly
 
 Пароль показывается **один раз**, на этом финальном этапе (после `setup`, если вы создали первую БД, а также после `db-create`, `user-create` и `user-passwd`). Дальше он нигде не выводится: `status`, `list` и меню его не показывают. Сразу сохраните пароль в менеджер паролей или секреты приложения.
 
-### 4. Интерактивное меню
+#### 4. Интерактивное меню
 
 Запуск без аргументов открывает меню со всеми действиями:
 
