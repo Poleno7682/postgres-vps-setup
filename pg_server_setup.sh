@@ -597,8 +597,8 @@ detect_storage() { # ssd | hdd | unknown (per kernel data; may be inaccurate on 
 analyze_hardware() {
   HW_CORES="$(nproc)"
   HW_MEM_MB=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 1024 ))
-  HW_AVAIL_MB=$(( $(awk '/^MemAvailable:/{print $2}' /proc/meminfo) / 1024 ))
-  HW_SWAP_MB=$(( $(awk '/^SwapTotal:/{print $2}' /proc/meminfo) / 1024 ))
+  HW_AVAIL_MB=$(( $(awk '/^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{print (a != "") ? a : f + b + c}' /proc/meminfo) / 1024 ))
+  HW_SWAP_MB=$(( $(awk '/^SwapTotal:/{t=$2} END{print t + 0}' /proc/meminfo) / 1024 ))
   HW_DISK_PATH="/var/lib/postgresql"
   if [[ ! -d "$HW_DISK_PATH" ]]; then HW_DISK_PATH="/var"; fi
   HW_DISK_FREE_GB=$(( $(df -Pk "$HW_DISK_PATH" | awk 'NR==2{print $4}') / 1048576 ))
