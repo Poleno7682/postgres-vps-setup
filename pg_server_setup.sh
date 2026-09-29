@@ -2341,6 +2341,7 @@ status_live() {
 
 cmd_status() {
   detect_cluster
+  analyze_hardware      # cores, disk path etc. — the dashboard needs them
   status_static
   if [[ "$INTERACTIVE" == 1 && "$ASSUME_YES" != 1 ]]; then
     status_live
