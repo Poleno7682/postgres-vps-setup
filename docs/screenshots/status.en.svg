@@ -6,7 +6,7 @@
 <g font-family="'JetBrains Mono','DejaVu Sans Mono',Menlo,Consolas,monospace" font-size="14">
 <rect x="34.8" y="48.0" width="126.0" height="19.0" fill="#89dceb"/>
 <text x="34.8" y="61.7" fill="#1e1e2e" font-weight="bold" textLength="126.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Server status </text>
-<text x="177.6" y="61.7" fill="#cdd6f4" opacity="0.6" textLength="420.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">pg-server-01 · refresh every 2 s · any key to exit</text>
+<text x="177.6" y="61.7" fill="#cdd6f4" opacity="0.6" textLength="403.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">refresh 2 s · g = graph style · other key = exit</text>
 <text x="34.8" y="99.7" fill="#89dceb" font-weight="bold" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭─</text>
 <text x="60.0" y="99.7" fill="#89dceb" font-weight="bold" textLength="92.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">Server load</text>
 <text x="160.8" y="99.7" fill="#89dceb" font-weight="bold" textLength="512.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">────────────────────────────────────────────────────────────╮</text>

@@ -2116,6 +2116,7 @@ cmd_list() {
 # ---- Server status: live load dashboard ------------------------------------------
 
 HIST_N=14                     # points kept for every sparkline
+SPARK_STYLE=""                # safe | fine | ascii (see spark_style_init)
 H_CPU=(); H_LOAD=(); H_RAM=(); H_CONN=(); H_TPS=(); H_RX=(); H_TX=()
 M_CPU=0; M_LOAD1="0.00"; M_LOAD5="0.00"; M_LOAD15="0.00"; M_LOADPCT=0
 M_RAM_PCT=0; M_RAM_USED_MB=0; M_RAM_TOTAL_MB=0
@@ -2139,11 +2140,20 @@ hist_push() { # hist_push ARRAY value
 }
 
 # Sparkline of the last HIST_N values (right aligned). spark ARRAY [fixed_max]
+# Sparkline of the last HIST_N values (right aligned). spark ARRAY [fixed_max]
+# Styles: safe  = · ░ ▒ ▓ █   (present in every font, e.g. PuTTY's Courier New)
+#         fine  = ▁▂▃▄▅▆▇█    (smooth, needs a font with the full block-element range)
+#         ascii = _ . - = + * # @
 spark() {
   local -n __a="$1"
-  local fixed="${2:-0}" max=0 v i out="" idx pad
+  local fixed="${2:-0}" max=0 v out="" idx pad top style="${SPARK_STYLE:-safe}"
   local -a ch
-  if [[ "$UTF" == 1 ]]; then ch=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █); else ch=(_ . - = + '*' '#' '@'); fi
+  if [[ "$UTF" != 1 ]]; then style=ascii; fi
+  case "$style" in
+    fine)  ch=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █); top=7 ;;
+    ascii) ch=(_ . - = + '*' '#' '@'); top=7 ;;
+    *)     ch=('·' ░ ▒ ▓ █); top=4 ;;
+  esac
   for v in "${__a[@]}"; do
     if (( v > max )); then max=$v; fi
   done
@@ -2152,12 +2162,23 @@ spark() {
   pad=$(( HIST_N - ${#__a[@]} ))
   if (( pad > 0 )); then out="$(rep ' ' "$pad")"; fi
   for v in "${__a[@]}"; do
-    idx=$(( v * 7 / max ))
-    if (( idx > 7 )); then idx=7; fi
+    idx=$(( v * top / max ))
+    if (( idx > top )); then idx=$top; fi
     if (( idx < 0 )); then idx=0; fi
     out+="${ch[idx]}"
   done
   printf '%s' "$out"
+}
+
+# Graph style: PGMGR_SPARK env > saved choice > "safe". Key "g" in the live view toggles it.
+spark_style_init() {
+  SPARK_STYLE="${PGMGR_SPARK:-$(state_get SPARK_STYLE)}"
+  case "$SPARK_STYLE" in safe|fine|ascii) ;; *) SPARK_STYLE=safe ;; esac
+}
+
+spark_toggle() {
+  if [[ "$SPARK_STYLE" == safe ]]; then SPARK_STYLE=fine; else SPARK_STYLE=safe; fi
+  state_set SPARK_STYLE "$SPARK_STYLE"
 }
 
 # Colour by load: low = green, high = red (invert=1: high = good, e.g. cache hit ratio)
@@ -2309,7 +2330,7 @@ render_status_frame() { # render_status_frame [live]
   if [[ "$live" == live ]]; then
     gap
     printf '  %s %s %s  %s%s%s\n' "$C_INV$C_CYAN" "$(L "Статус сервера" "Server status")" "$C_RESET" "$C_DIM" \
-      "$(L "$(hostname) · обновление каждые 2 с · любая клавиша — выход" "$(hostname) · refresh every 2 s · any key to exit")" "$C_RESET"
+      "$(L "обновление 2 с · g — вид графиков · др. клавиша — выход" "refresh 2 s · g = graph style · other key = exit")" "$C_RESET"
   fi
   gap
   box_top "$(L "Нагрузка сервера" "Server load")" "$C_CYAN"
@@ -2375,7 +2396,9 @@ status_live() {
     fi
     frame="${frame//$'\n'/$'\033[K\n'}"                                # erase leftovers of the previous frame
     printf '\033[H%s\033[K\n\033[J' "$frame"
-    if read -rs -n1 -t 2 k; then break; fi
+    if read -rs -n1 -t 2 k; then
+      if [[ "$k" == g || "$k" == G ]]; then spark_toggle; else break; fi
+    fi
   done
   printf '\033[?25h'
 }
@@ -2384,6 +2407,7 @@ cmd_status() {
   detect_cluster
   analyze_hardware      # cores, disk path etc. — the dashboard needs them
   status_static
+  spark_style_init
   if [[ "$INTERACTIVE" == 1 && "$ASSUME_YES" != 1 ]]; then
     status_live
     return 0
