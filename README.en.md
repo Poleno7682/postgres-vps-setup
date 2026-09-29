@@ -175,6 +175,30 @@ sudo ./pg_server_setup.sh
 - **Boxes and colours:** green — success, yellow — warnings and confirmations, red — errors, cyan — questions.
 - **Automatic plain fallback:** when output is not a terminal (logs, `ssh host cmd | tee`, cron) or `NO_COLOR=1` is set, colours, screen clearing and animation are disabled. With `-y` the screen is never cleared. Terminals without UTF-8 get ASCII boxes and icons.
 
+### Screenshots
+
+The images are generated from the script's real UI code with sample data (`tools/render_screens.sh`); no server is needed to produce them.
+
+**Main menu**: server status and grouped items.
+
+![Main menu](docs/screenshots/menu.en.svg)
+
+**Initial `setup`**: server analysis and `[n/8]` steps with progress.
+
+![Initial setup](docs/screenshots/setup.en.svg)
+
+**Resuming after an interruption**: completed steps are skipped (`↷`), missing ones are finished.
+
+![Resuming setup](docs/screenshots/resume.en.svg)
+
+**Summary: network and "Done"**.
+
+![Network and summary](docs/screenshots/network.en.svg)
+
+**Connection details** (the password is shown once; the one in the screenshot is a placeholder).
+
+![Connection details](docs/screenshots/creds.en.svg)
+
 ## What `setup` does
 
 | Step | On re-run |
