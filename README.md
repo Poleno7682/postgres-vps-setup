@@ -464,3 +464,7 @@ sudo rm -rf /etc/pgmgr
 ```
 
 Swap-файл (`/swapfile` и строку в `/etc/fstab`) при необходимости удалите вручную.
+
+## Лицензия
+
+[MIT](LICENSE) © 2026 Poleno7682
