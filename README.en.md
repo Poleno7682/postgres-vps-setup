@@ -102,6 +102,38 @@ Recommended configuration for several small and medium projects:
 
 ## Quick start
 
+### Before you install: update the system
+
+> [!IMPORTANT]
+> Before running the script it is recommended to update all packages on the server, especially on a freshly created VPS. That way PostgreSQL is installed on up-to-date libraries with security fixes, and `apt` does not clash with background updates.
+
+1. Refresh the package index and upgrade all installed packages:
+
+```bash
+sudo apt-get update && sudo apt-get -y full-upgrade
+```
+
+2. Remove packages that are no longer needed (optional):
+
+```bash
+sudo apt-get -y autoremove
+```
+
+3. Check whether a reboot is required (it is after kernel and core library updates):
+
+```bash
+[ -f /var/run/reboot-required ] && echo "Reboot required" || echo "No reboot needed"
+```
+
+If it is required, reboot the server and reconnect over SSH:
+
+```bash
+sudo reboot
+```
+
+> [!TIP]
+> On a freshly created VPS an automatic update (`cloud-init`, `unattended-upgrades`) often runs during the first minutes, and `apt` reports "Could not get lock". The script waits for the lock for up to 2 minutes on its own, but it is better to let the update finish before starting the installation.
+
 ### One-command install
 
 Connect to the server over SSH and run (as root or with `sudo`):
