@@ -53,7 +53,7 @@ readonly BACKUP_BIN="/usr/local/sbin/pgmgr-backup"
 readonly BACKUP_CRON="/etc/cron.d/pgmgr-backup"
 readonly STATE_DIR="/etc/pgmgr"
 readonly STATE_FILE="${STATE_DIR}/pgmgr.conf"
-readonly MIN_PASSWORD_LEN=12
+readonly MIN_PASSWORD_LEN=6
 
 PG_VERSION="${PG_VERSION:-17}"
 MAX_CONNECTIONS="${MAX_CONNECTIONS:-}"      # empty = auto by resources
@@ -1230,34 +1230,45 @@ print_network_summary() {
 # -------------------------------------------- roles, groups, owners ----
 
 # Password choice: enter your own or generate. -> PASSWORD_INPUT, PASSWORD_GENERATED
+# Prints why a custom password is not acceptable (nothing if it is fine):
+# only Latin letters (upper/lower case) and digits, at least MIN_PASSWORD_LEN characters.
+password_problem() {
+  local LC_ALL=C p="$1"
+  if ! [[ "$p" =~ ^[A-Za-z0-9]*$ ]]; then
+    L "Допустимы только латинские буквы (большие и маленькие) и цифры — без спецсимволов, пробелов и кириллицы"       "Only Latin letters (upper and lower case) and digits are allowed — no special characters, spaces or non-Latin letters"
+    return 0
+  fi
+  if (( ${#p} < MIN_PASSWORD_LEN )); then
+    L "Пароль должен содержать не менее ${MIN_PASSWORD_LEN} символов"       "The password must be at least ${MIN_PASSWORD_LEN} characters long"
+  fi
+}
+
+# Password choice: enter your own or generate. -> PASSWORD_INPUT, PASSWORD_GENERATED
 choose_password() { # choose_password "for whom"
-  local who="$1" mode=1 p1 p2
+  local who="$1" mode=1 p1 p2 problem
   PASSWORD_GENERATED=0
   if [[ -n "${PGMGR_PASSWORD:-}" ]]; then
     PASSWORD_INPUT="$PGMGR_PASSWORD"
-    (( ${#PASSWORD_INPUT} >= MIN_PASSWORD_LEN )) || die "$(L "Пароль короче ${MIN_PASSWORD_LEN} символов" "Password is shorter than ${MIN_PASSWORD_LEN} characters")"
+    problem="$(password_problem "$PASSWORD_INPUT")"
+    [[ -z "$problem" ]] || die "PGMGR_PASSWORD: $problem"
     return 0
   fi
   if [[ ! -t 0 ]]; then
     PASSWORD_INPUT="$(gen_password)"; PASSWORD_GENERATED=1
     return 0
   fi
-  pick mode "$(L "Пароль для '$who':" "Password for '$who':")" 1 \
-    "$(L "Сгенерировать надёжный случайный (рекомендуется)" "Generate a strong random one (recommended)")" \
-    "$(L "Ввести свой" "Enter my own")"
+  pick mode "$(L "Пароль для '$who':" "Password for '$who':")" 1     "$(L "Сгенерировать надёжный случайный (рекомендуется)" "Generate a strong random one (recommended)")"     "$(L "Ввести свой (латинские буквы и цифры, не менее ${MIN_PASSWORD_LEN} символов)" "Enter my own (Latin letters and digits, at least ${MIN_PASSWORD_LEN} characters)")"
   if (( mode == 1 )); then
     PASSWORD_INPUT="$(gen_password)"; PASSWORD_GENERATED=1
     return 0
   fi
   while true; do
-    read -rs -p "$(L "Введите пароль (минимум ${MIN_PASSWORD_LEN} символов): " "Enter the password (at least ${MIN_PASSWORD_LEN} characters): ")" p1 || die "$(L "Ввод прерван" "Input interrupted")"; echo
-    if (( ${#p1} < MIN_PASSWORD_LEN )); then warn "$(L "Слишком короткий пароль" "Password too short")"; continue; fi
-    read -rs -p "$(L "Повторите пароль: " "Repeat the password: ")" p2 || die "$(L "Ввод прерван" "Input interrupted")"; echo
+    read -rs -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Введите пароль" "Enter the password"): " p1 || die "$(L "Ввод прерван" "Input interrupted")"; echo
+    problem="$(password_problem "$p1")"
+    if [[ -n "$problem" ]]; then warn "$problem"; continue; fi
+    read -rs -p "  ${C_CYAN}${I_Q}${C_RESET} $(L "Повторите пароль" "Repeat the password"): " p2 || die "$(L "Ввод прерван" "Input interrupted")"; echo
     if [[ "$p1" != "$p2" ]]; then warn "$(L "Пароли не совпадают" "Passwords do not match")"; continue; fi
     PASSWORD_INPUT="$p1"
-    if [[ "$p1" =~ [@:/?#%\ ] ]]; then
-      warn "$(L "В пароле есть спецсимволы (@ : / ? # % пробел) — в URL-строке подключения их нужно кодировать (percent-encoding)." "The password contains special characters (@ : / ? # % space) — they must be percent-encoded in a connection URL.")"
-    fi
     return 0
   done
 }

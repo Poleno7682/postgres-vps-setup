@@ -397,7 +397,7 @@ Arguments you do not pass are requested interactively. The `-y` flag disables co
 When creating a user, a database (its owner), and in `user-passwd`, the script asks you to:
 
 1. **Generate** a strong random password (recommended);
-2. **Enter your own**: hidden input, confirmation prompt, at least 12 characters.
+2. **Enter your own**: hidden input with a confirmation prompt. The password is validated: **only Latin letters (upper and lower case) and digits**, no special characters, spaces or non-Latin letters, **at least 6 characters**. If it does not comply, the script explains why and asks again. Generated passwords always comply (40 characters, digits and Latin letters). The longer the password the better: for an internet-facing server prefer a generated one.
 
 The final password (generated or entered by you) is shown once in the connection details block. Without an interactive terminal, pass a password through `PGMGR_PASSWORD` (not as a command-line argument: it would be visible in `ps`); if the variable is not set, a password is generated.
 
@@ -570,7 +570,7 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 | `SWAP_GB` | swap file size, GB (`0`: do not create) | `2` |
 | `BACKUP_DIR` | backup directory | `/var/backups/postgresql` |
 | `BACKUP_RETENTION_DAYS` | dump retention, days | `14` |
-| `PGMGR_PASSWORD` | ready-made password (at least 12 characters) | generated |
+| `PGMGR_PASSWORD` | ready-made password (Latin letters and digits, at least 6 characters) | generated |
 | `PGMGR_HOST` | IP or domain shown in the connection block and URL | auto-detected |
 | `PGMGR_ASCII` | `1`: ASCII boxes and icons instead of Unicode | unset |
 
