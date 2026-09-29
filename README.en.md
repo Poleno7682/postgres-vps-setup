@@ -192,6 +192,17 @@ sudo ./pg_server_setup.sh
 
 Change the network mode later with `sudo ./pg_server_setup.sh network`.
 
+### If setup was interrupted
+
+A dropped SSH session, `Ctrl+C`, a reboot or an error in the middle of `setup` is not a problem: **just run `sudo ./pg_server_setup.sh setup` again**.
+
+- The script remembers that the previous run did not finish and shows a "Resuming setup" box with the step where it stopped. It does not rely on that memory alone: **every step is verified against the real state of the system**.
+- Completed work is skipped (marked with `↷` in the output): installed packages (prerequisites, `postgresql-<version>`), the configured PGDG repository, the created cluster, enabled autostart, the running service, an up-to-date settings file, active swap, `vm.swappiness`, the generated backup script and schedule, installed `ufw`.
+- Missing pieces are completed: an interrupted package installation (`dpkg --configure -a`), a package without a cluster (the cluster is created), an inactive `/swapfile` (activated), settings that were written but not applied because the restart was interrupted (the service is restarted).
+- The chosen language, network mode and port are saved immediately, so they are not asked again.
+
+Tip: on an unstable connection run `setup` inside `tmux` or `screen`, so a dropped SSH session does not stop the installation.
+
 ## Network modes
 
 The mode is chosen on the first `setup` (interactively or via environment variables) and saved to `/etc/pgmgr/pgmgr.conf`.

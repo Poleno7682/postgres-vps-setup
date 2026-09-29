@@ -114,7 +114,7 @@ BOX_W=70
 C_RESET=""; C_BOLD=""; C_DIM=""; C_INV=""
 C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""; C_MAGENTA=""; C_CYAN=""
 G1=""; G2=""; G3=""
-I_OK="[+]"; I_WARN="[!]"; I_ERR="[x]"; I_INFO="[i]"; I_Q="?"; I_ARROW=">"; I_DOT="*"
+I_OK="[+]"; I_WARN="[!]"; I_ERR="[x]"; I_INFO="[i]"; I_SKIP="[-]"; I_Q="?"; I_ARROW=">"; I_DOT="*"
 B_TL="+"; B_TR="+"; B_BL="+"; B_BR="+"; B_H="-"; B_V="|"; B_HH="="
 SPIN=('|' '/' '-' '\')
 BC=""            # colour of the box currently being drawn
@@ -142,7 +142,7 @@ ui_init() {
   fi
 
   if [[ "$UTF" == 1 ]]; then
-    I_OK="✔"; I_WARN="⚠"; I_ERR="✖"; I_INFO="●"; I_Q="›"; I_ARROW="▶"; I_DOT="●"
+    I_OK="✔"; I_WARN="⚠"; I_ERR="✖"; I_INFO="●"; I_SKIP="↷"; I_Q="›"; I_ARROW="▶"; I_DOT="●"
     B_TL="╭"; B_TR="╮"; B_BL="╰"; B_BR="╯"; B_H="─"; B_V="│"; B_HH="━"
     SPIN=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
   fi
@@ -162,11 +162,29 @@ rep() { # rep CHAR COUNT
 
 log()  { printf '  %s%s%s %s\n' "$C_GREEN" "$I_OK" "$C_RESET" "$*"; }
 info() { printf '  %s%s%s %s\n' "$C_CYAN" "$I_INFO" "$C_RESET" "$*"; }
+skip() { printf '  %s%s %s%s\n' "$C_DIM" "$I_SKIP" "$*" "$C_RESET"; }
 warn() { printf '  %s%s%s %s\n' "$C_YELLOW" "$I_WARN" "$C_RESET" "$*" >&2; }
 die()  { printf '  %s%s %s%s\n' "$C_RED" "$I_ERR" "$*" "$C_RESET" >&2; exit 1; }
 
 ui_cleanup() { if [[ "$UI_ON" == 1 ]]; then printf '\033[?25h'; fi; }
-trap ui_cleanup EXIT
+SETUP_ACTIVE=0   # 1 while `setup` is running (used to report an interrupted run)
+SETUP_STEP=0
+SETUP_TOTAL=8
+
+# On any non-zero exit during `setup`, remember that it was interrupted: the next
+# run verifies every step against the real system state and continues.
+on_exit() {
+  local rc=$?
+  ui_cleanup
+  if [[ "$SETUP_ACTIVE" == 1 && $rc -ne 0 ]]; then
+    state_set SETUP_STATUS interrupted 2>/dev/null || true
+    printf '\n  %s%s %s%s\n' "$C_YELLOW" "$I_WARN" \
+      "$(L "Настройка прервана на шаге ${SETUP_STEP}/${SETUP_TOTAL}. Запустите 'sudo $SELF setup' ещё раз: уже выполненное будет проверено и пропущено, работа продолжится с места остановки." \
+           "Setup was interrupted at step ${SETUP_STEP}/${SETUP_TOTAL}. Run 'sudo $SELF setup' again: completed work is verified and skipped, and it continues where it stopped.")" \
+      "$C_RESET" >&2
+  fi
+}
+trap on_exit EXIT
 trap 'ui_cleanup; printf "\n"; exit 130' INT
 trap 'warn "$(L "Сбой на строке ${LINENO} (команда: ${BASH_COMMAND})" "Failure at line ${LINENO} (command: ${BASH_COMMAND})")"' ERR
 
@@ -220,6 +238,8 @@ progress_bar() { # progress_bar current total
 }
 
 step_header() { # step_header n total "title"
+  SETUP_STEP="$1"
+  if [[ "$SETUP_ACTIVE" == 1 ]]; then state_set SETUP_LAST_STEP "$1"; fi
   printf '\n  %s%s [%d/%d] %s%s\n  %s\n' "$C_MAGENTA" "$I_ARROW" "$1" "$2" "$3" "$C_RESET" "$(progress_bar "$1" "$2")"
 }
 
@@ -1197,15 +1217,70 @@ apply_profile() { # apply_profile db user profile
 
 # ------------------------------------------------------------ setup ----
 
+pkg_installed() { dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null | grep -qx installed; }
+
+pgdg_repo_present() { grep -rqsE 'apt\.postgresql\.org' /etc/apt/sources.list /etc/apt/sources.list.d/; }
+
+# Verifies each piece separately (prerequisites, PGDG repository, server package,
+# cluster) and does only what is missing — safe to run after an interrupted install.
 install_postgres() {
   export DEBIAN_FRONTEND=noninteractive
-  run_step "$(L "Обновляю индекс пакетов" "Updating the package index")" apt-get update -qq
-  run_step "$(L "Устанавливаю зависимости" "Installing prerequisites")" \
-    apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl postgresql-common
-  run_step "$(L "Подключаю репозиторий PGDG" "Adding the PGDG repository")" \
-    /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-  run_step "$(L "Устанавливаю PostgreSQL ${PG_VERSION}" "Installing PostgreSQL ${PG_VERSION}")" \
-    apt-get install -y -qq "postgresql-${PG_VERSION}"
+  local -a apt_opts=(-o DPkg::Lock::Timeout=120)
+  local -a missing=()
+  local p refreshed=0
+
+  if [[ -n "$(dpkg --audit 2>/dev/null)" ]]; then
+    run_step "$(L "Завершаю прерванную установку пакетов (dpkg --configure -a)" "Finishing an interrupted package installation (dpkg --configure -a)")" \
+      dpkg --configure -a
+  fi
+
+  for p in curl ca-certificates gnupg lsb-release openssl postgresql-common; do
+    if ! pkg_installed "$p"; then missing+=("$p"); fi
+  done
+  if (( ${#missing[@]} > 0 )); then
+    run_step "$(L "Обновляю индекс пакетов" "Updating the package index")" apt-get "${apt_opts[@]}" update -qq
+    refreshed=1
+    run_step "$(L "Устанавливаю зависимости: ${missing[*]}" "Installing prerequisites: ${missing[*]}")" \
+      apt-get "${apt_opts[@]}" install -y -qq "${missing[@]}"
+  else
+    skip "$(L "Зависимости уже установлены" "Prerequisites are already installed")"
+  fi
+
+  if pgdg_repo_present; then
+    skip "$(L "Репозиторий PGDG уже подключён" "The PGDG repository is already configured")"
+  else
+    run_step "$(L "Подключаю репозиторий PGDG" "Adding the PGDG repository")" \
+      /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+    refreshed=1
+  fi
+
+  if pkg_installed "postgresql-${PG_VERSION}"; then
+    skip "$(L "Пакет postgresql-${PG_VERSION} уже установлен" "Package postgresql-${PG_VERSION} is already installed")"
+  else
+    if (( refreshed == 0 )); then
+      run_step "$(L "Обновляю индекс пакетов" "Updating the package index")" apt-get "${apt_opts[@]}" update -qq
+    fi
+    run_step "$(L "Устанавливаю PostgreSQL ${PG_VERSION}" "Installing PostgreSQL ${PG_VERSION}")" \
+      apt-get "${apt_opts[@]}" install -y -qq "postgresql-${PG_VERSION}"
+  fi
+
+  detect_cluster
+  if [[ -z "$PG_VER" ]]; then
+    warn "$(L "Пакет установлен, но кластер не создан (прерванная установка?) — создаю" "The package is installed but no cluster exists (interrupted install?) — creating it")"
+    run_step "$(L "Создаю кластер ${PG_VERSION}/main" "Creating cluster ${PG_VERSION}/main")" pg_createcluster "$PG_VERSION" main --start
+  fi
+}
+
+# If the service is up but not answering (e.g. the config was changed but the
+# restart never happened), restart it once so the saved configuration is applied.
+ensure_responding() {
+  local i
+  for i in 1 2 3 4 5; do
+    if pg_isready -q; then return 0; fi
+    sleep 1
+  done
+  warn "$(L "Сервис запущен, но не отвечает на порту ${PG_PORT} — перезапускаю (конфигурация могла не примениться)" "The service is up but not answering on port ${PG_PORT} — restarting it (the configuration may not have been applied)")"
+  systemctl restart "$SVC"
 }
 
 # Parameter calculation for this server (cores, RAM, disk type, role, network).
@@ -1298,6 +1373,11 @@ step_tuning() {
   fi
   rm -f "$tmp"
 
+  if [[ "$need_restart" == 0 && "$(psql_val 'SELECT count(*) FROM pg_settings WHERE pending_restart' 2>/dev/null || echo 0)" != 0 ]]; then
+    info "$(L "Есть параметры, ожидающие перезапуска (прерванная настройка) — перезапускаю" "Some settings are waiting for a restart (interrupted setup) — restarting")"
+    need_restart=1
+  fi
+
   if [[ "$need_restart" == 1 || "$PORT_CHANGED" == 1 ]]; then
     log "$(L "Перезапускаю PostgreSQL для применения настроек" "Restarting PostgreSQL to apply settings")"
     systemctl restart "$SVC"
@@ -1317,23 +1397,40 @@ step_harden() {
 }
 
 step_swap_sysctl() {
+  local ok=0 sysctl_conf="/etc/sysctl.d/99-pgmgr.conf"
   if [[ -n "$(swapon --show --noheadings 2>/dev/null)" ]]; then
-    log "$(L "Swap уже настроен" "Swap is already configured")"
+    skip "$(L "Swap уже активен" "Swap is already active")"
   elif [[ "$SWAP_GB" -gt 0 ]]; then
-    if fallocate -l "${SWAP_GB}G" /swapfile 2>/dev/null \
-       && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; then
-      grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-      log "$(L "Создан swap ${SWAP_GB} ГБ (страховка от OOM)" "Swap of ${SWAP_GB} GB created (OOM insurance)")"
+    if [[ -f /swapfile ]]; then
+      warn "$(L "Найден неактивный /swapfile (вероятно, прерванная настройка) — активирую" "Found an inactive /swapfile (probably an interrupted setup) — activating it")"
+      chmod 600 /swapfile
+      if swapon /swapfile 2>/dev/null || { mkswap -f /swapfile >/dev/null && swapon /swapfile; }; then ok=1; fi
+    elif fallocate -l "${SWAP_GB}G" /swapfile 2>/dev/null \
+         && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; then
+      ok=1
+    fi
+    if [[ "$ok" == 1 ]]; then
+      log "$(L "Swap включён (страховка от OOM)" "Swap enabled (OOM insurance)")"
     else
       warn "$(L "Не удалось создать swap (контейнерная виртуализация?) — пропускаю" "Could not create swap (container virtualization?) — skipping")"
     fi
   fi
-  printf 'vm.swappiness = 1\n' > /etc/sysctl.d/99-pgmgr.conf
-  sysctl -q -p /etc/sysctl.d/99-pgmgr.conf >/dev/null || warn "$(L "sysctl не применён" "sysctl was not applied")"
+  if [[ -f /swapfile ]] && ! grep -q '^/swapfile' /etc/fstab; then
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  fi
+  if [[ -f "$sysctl_conf" ]] && grep -qx 'vm.swappiness = 1' "$sysctl_conf"; then
+    skip "$(L "vm.swappiness уже настроен" "vm.swappiness is already configured")"
+  else
+    printf 'vm.swappiness = 1\n' > "$sysctl_conf"
+    log "$(L "vm.swappiness = 1" "vm.swappiness = 1")"
+  fi
+  sysctl -q -p "$sysctl_conf" >/dev/null || warn "$(L "sysctl не применён" "sysctl was not applied")"
 }
 
 step_backup() {
+  local tmp cron_line changed=0
   install -d -o postgres -g postgres -m 700 "$BACKUP_DIR"
+  tmp="$(mktemp)"
   {
     cat <<EOF
 #!/usr/bin/env bash
@@ -1362,11 +1459,29 @@ pg_dumpall --globals-only > "$DIR/globals_${stamp}.sql"
 find "$DIR" -type f \( -name '*.dump' -o -name 'globals_*.sql' \) -mtime +"$KEEP_DAYS" -delete
 exit $rc
 EOF
-  } > "$BACKUP_BIN"
-  chmod 755 "$BACKUP_BIN"
-  printf '0 3 * * * postgres %s >> %s/backup.log 2>&1\n' "$BACKUP_BIN" "$BACKUP_DIR" > "$BACKUP_CRON"
-  chmod 644 "$BACKUP_CRON"
-  log "$(L "Бэкап: ежедневно в 03:00 -> $BACKUP_DIR (хранение ${BACKUP_RETENTION_DAYS} дн.). Копию вне сервера настройте отдельно (rclone/S3)." "Backup: daily at 03:00 -> $BACKUP_DIR (kept ${BACKUP_RETENTION_DAYS} days). Set up an off-server copy separately (rclone/S3).")"
+  } > "$tmp"
+  if [[ -x "$BACKUP_BIN" ]] && cmp -s "$tmp" "$BACKUP_BIN"; then
+    :
+  else
+    install -m 755 "$tmp" "$BACKUP_BIN"
+    changed=1
+  fi
+  rm -f "$tmp"
+
+  cron_line="0 3 * * * postgres ${BACKUP_BIN} >> ${BACKUP_DIR}/backup.log 2>&1"
+  if [[ -f "$BACKUP_CRON" && "$(cat "$BACKUP_CRON")" == "$cron_line" ]]; then
+    :
+  else
+    printf '%s\n' "$cron_line" > "$BACKUP_CRON"
+    chmod 644 "$BACKUP_CRON"
+    changed=1
+  fi
+
+  if [[ "$changed" == 1 ]]; then
+    log "$(L "Бэкап: ежедневно в 03:00 -> $BACKUP_DIR (хранение ${BACKUP_RETENTION_DAYS} дн.). Копию вне сервера настройте отдельно (rclone/S3)." "Backup: daily at 03:00 -> $BACKUP_DIR (kept ${BACKUP_RETENTION_DAYS} days). Set up an off-server copy separately (rclone/S3).")"
+  else
+    skip "$(L "Бэкап уже настроен и актуален (03:00 -> $BACKUP_DIR)" "Backup is already configured and up to date (03:00 -> $BACKUP_DIR)")"
+  fi
 }
 
 cmd_firewall_init() {
@@ -1376,7 +1491,12 @@ cmd_firewall_init() {
   sshp="${sshp:-22}"
   warn "$(L "Будет включён ufw: deny incoming; разрешён SSH (порт $sshp, с ограничением частоты). Порт $PG_PORT — только для клиентов из выбранного режима сети и из access-add." "ufw will be enabled: deny incoming; SSH allowed (port $sshp, rate-limited). Port $PG_PORT — only for clients of the selected network mode and from access-add.")"
   confirm "$(L "Включить файрвол?" "Enable the firewall?")" || { log "$(L "Пропущено" "Skipped")"; return 0; }
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw
+  if pkg_installed ufw; then
+    skip "$(L "ufw уже установлен" "ufw is already installed")"
+  else
+    run_step "$(L "Устанавливаю ufw" "Installing ufw")" \
+      env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 install -y -qq ufw
+  fi
   ufw limit "${sshp}/tcp" >/dev/null
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
@@ -1392,24 +1512,41 @@ cmd_analyze() {
 }
 
 cmd_setup() {
-  local total=8
+  local total="$SETUP_TOTAL" prev last
   require_root
+  prev="$(state_get SETUP_STATUS)"
+  last="$(state_get SETUP_LAST_STEP)"
+  if [[ "$prev" == interrupted || "$prev" == running ]]; then
+    echo
+    box_top "$(L "Возобновление настройки" "Resuming setup")" "$C_YELLOW"
+    box_row "$(L "Предыдущий запуск setup не был завершён (остановка на шаге ${last:-?} из ${total})." "The previous setup run did not finish (stopped at step ${last:-?} of ${total}).")"
+    box_row "$(L "Проверяю, что уже сделано, пропускаю выполненное и продолжаю." "Checking what is already done, skipping it, and continuing.")"
+    box_bottom
+  fi
+  SETUP_ACTIVE=1
+  state_set SETUP_STATUS running
   step_header 1 "$total" "$(L "Анализ сервера" "Server analysis")"
   cmd_analyze
 
   step_header 2 "$total" "$(L "Установка и запуск PostgreSQL" "PostgreSQL installation and startup")"
   detect_cluster
   if [[ -n "$PG_VER" ]]; then
-    log "$(L "PostgreSQL ${PG_VER} (кластер ${PG_CLUSTER}, порт ${PG_PORT}) уже установлен" "PostgreSQL ${PG_VER} (cluster ${PG_CLUSTER}, port ${PG_PORT}) is already installed")"
+    skip "$(L "PostgreSQL ${PG_VER} (кластер ${PG_CLUSTER}, порт ${PG_PORT}) уже установлен" "PostgreSQL ${PG_VER} (cluster ${PG_CLUSTER}, port ${PG_PORT}) is already installed")"
   else
     install_postgres
     detect_cluster
     [[ -n "$PG_VER" ]] || die "$(L "Кластер PostgreSQL не найден после установки" "PostgreSQL cluster not found after installation")"
   fi
 
-  systemctl enable postgresql >/dev/null 2>&1 || true
+  if systemctl is-enabled --quiet postgresql 2>/dev/null; then
+    skip "$(L "Автозапуск PostgreSQL уже включён" "PostgreSQL autostart is already enabled")"
+  else
+    systemctl enable postgresql >/dev/null 2>&1 || true
+    log "$(L "Автозапуск PostgreSQL включён" "PostgreSQL autostart enabled")"
+  fi
   if systemctl is-active --quiet "$SVC"; then
-    log "$(L "Сервис $SVC запущен" "Service $SVC is running")"
+    skip "$(L "Сервис $SVC уже запущен" "Service $SVC is already running")"
+    ensure_responding
   else
     warn "$(L "Сервис $SVC не запущен — запускаю" "Service $SVC is not running — starting it")"
     systemctl start "$SVC"
@@ -1446,6 +1583,9 @@ cmd_setup() {
   box_row "$(L "Сервер PostgreSQL настроен и запущен." "The PostgreSQL server is set up and running.")" "$C_GREEN$C_BOLD"
   box_row "$(L "Управление БД и пользователями: sudo $SELF" "Manage databases and users: sudo $SELF")" "$C_DIM"
   box_bottom
+  SETUP_ACTIVE=0
+  state_set SETUP_STATUS complete
+  state_set SETUP_LAST_STEP "$total"
 
   if [[ -t 0 && "$ASSUME_YES" != 1 ]] \
      && [[ "$(psql_val "SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'")" == 0 ]]; then
