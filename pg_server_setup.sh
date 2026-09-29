@@ -13,7 +13,9 @@
 #        private — приватная сеть/VPN (listen = приватный IP + localhost);
 #        public  — публичный IP: доступ для ВСЕХ (0.0.0.0/0) либо только
 #                  для выбранных IP / диапазонов.
-#   3. Ставит PostgreSQL (PGDG), тюнит, закрывает лишнее, настраивает swap,
+#   3. Спрашивает порт PostgreSQL: стандартный 5432, свой или случайный
+#      свободный (можно сменить позже командой `port`).
+#   4. Ставит PostgreSQL (PGDG), тюнит, закрывает лишнее, настраивает swap,
 #      бэкапы и (по желанию) файрвол ufw.
 #
 # Модель изоляции: один кластер, на каждый проект — своя БД.
@@ -33,7 +35,8 @@
 # Переменные окружения (необязательные; для неинтерактивного запуска):
 #   NETWORK_MODE=local|private|public   ACCESS_POLICY=list|all (для public)
 #   LISTEN_ADDR=10.0.0.5[,IP2] | '*'    ALLOWED_CIDR=203.0.113.10,198.51.100.0/24
-#   SERVER_ROLE=dedicated|shared        PG_VERSION=17
+#   DB_PORT=default|random|<число>      SERVER_ROLE=dedicated|shared
+#   PG_VERSION=17
 #   MAX_CONNECTIONS=<N>  STORAGE=ssd|hdd  SWAP_GB=2
 #   BACKUP_DIR=/var/backups/postgresql  BACKUP_RETENTION_DAYS=14
 #   PGMGR_PASSWORD=...   (готовый пароль для создаваемого/меняемого пользователя)
@@ -79,6 +82,12 @@ DEFAULT_CIDRS=""
 LISTEN_ADDR="${LISTEN_ADDR:-}"
 SERVER_ROLE="${SERVER_ROLE:-}"
 IP_CANDS=()
+
+# Выбор порта (select_port / step_port_config)
+DB_PORT="${DB_PORT:-}"
+DESIRED_PORT=""
+PORT_OLD=""
+PORT_CHANGED=0
 
 # ---------------------------------------------------------------- вывод ----
 
@@ -612,6 +621,141 @@ apply_ufw_defaults() { # порт PG — только для клиентов и
   fi
 }
 
+# ------------------------------------------------------------- порт ----
+
+port_in_use() { [[ -n "$(ss -H -ltn "sport = :$1" 2>/dev/null)" ]]; }
+
+ssh_port() {
+  local p
+  p="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}' || true)"
+  echo "${p:-22}"
+}
+
+validate_port() { # порт должен быть числом 1024-65535, не SSH и не занят чужим процессом
+  local p="$1"
+  [[ "$p" =~ ^[0-9]+$ ]] || die "Порт должен быть числом: '$p'"
+  (( p >= 1024 && p <= 65535 )) || die "Порт вне диапазона 1024-65535: $p"
+  if [[ "$p" == "$(ssh_port)" ]]; then die "Порт $p занят под SSH"; fi
+  if [[ "$p" != "$PG_PORT" ]] && port_in_use "$p"; then die "Порт $p уже занят другим процессом"; fi
+}
+
+random_free_port() {
+  local i p
+  for i in $(seq 1 50); do
+    p="$(shuf -i 10000-32000 -n1)"
+    if [[ "$p" != "$(ssh_port)" ]] && ! port_in_use "$p"; then echo "$p"; return 0; fi
+  done
+  die "Не удалось подобрать свободный порт"
+}
+
+# Выбор порта: стандартный 5432 / свой / случайный свободный. Ничего не меняет,
+# только определяет DESIRED_PORT. Сохранённый выбор повторно не спрашивается.
+select_port() { # select_port [force=0]
+  local force="${1:-0}" choice="${DB_PORT:-}" saved idx=1
+  saved="$(state_get DB_PORT)"
+
+  if [[ -z "$choice" && -n "$saved" && "$force" != 1 ]]; then
+    DESIRED_PORT="$saved"
+    log "Порт (из сохранённых настроек): $DESIRED_PORT"
+    return 0
+  fi
+
+  if [[ -z "$choice" ]]; then
+    if [[ -t 0 ]]; then
+      pick idx "Порт PostgreSQL (сейчас: ${PG_PORT}):" 1 \
+        "Стандартный 5432" \
+        "Свой порт" \
+        "Случайный свободный порт"
+      case "$idx" in
+        1) choice=default ;;
+        2) ask choice "Введите порт (1024-65535)" ;;
+        3) choice=random ;;
+      esac
+    else
+      choice="${saved:-$PG_PORT}"
+    fi
+  fi
+
+  case "$choice" in
+    default) DESIRED_PORT=5432 ;;
+    random)  DESIRED_PORT="$(random_free_port)" ;;
+    *)       DESIRED_PORT="$choice" ;;
+  esac
+  validate_port "$DESIRED_PORT"
+  log "Выбран порт PostgreSQL: $DESIRED_PORT"
+}
+
+# Прописывает порт в postgresql.conf кластера (pg_conftool). Перезапуск выполняет вызывающий.
+step_port_config() {
+  PORT_CHANGED=0
+  if [[ "$DESIRED_PORT" == "$PG_PORT" ]]; then
+    log "Порт PostgreSQL: $PG_PORT"
+    state_set DB_PORT "$PG_PORT"
+    return 0
+  fi
+  PORT_OLD="$PG_PORT"
+  pg_conftool "$PG_VER" "$PG_CLUSTER" set port "$DESIRED_PORT"
+  PORT_CHANGED=1
+  log "Порт в конфигурации: $PORT_OLD -> $DESIRED_PORT (применится после перезапуска)"
+}
+
+managed_cidrs() { # CIDR из правил pg_hba скрипта + сети режима
+  local f
+  f="$(hba_file)"
+  { grep "# ${TAG}:" "$f" || true; } | awk '{print $4}'
+  state_get DEFAULT_CIDRS | tr ',' '\n'
+}
+
+migrate_ufw_port() { # migrate_ufw_port старый новый
+  local old="$1" new="$2" c
+  if ! ufw_active; then
+    if [[ "$(state_get NETWORK_MODE)" == public ]]; then
+      warn "ufw не активен: порт $new защищён только pg_hba.conf. Рекомендуется: $SELF firewall-init"
+    fi
+    return 0
+  fi
+  while read -r c; do
+    if [[ -z "$c" ]]; then continue; fi
+    if [[ "$c" == "0.0.0.0/0" ]]; then
+      ufw --force delete allow "${old}/tcp" >/dev/null 2>&1 || true
+    else
+      ufw --force delete allow from "$c" to any port "$old" proto tcp >/dev/null 2>&1 || true
+    fi
+    ufw_allow "$c"
+  done < <(managed_cidrs | sort -u)
+  log "ufw: правила перенесены с порта $old на $new"
+}
+
+# Вызывать после перезапуска PostgreSQL и detect_cluster с новым портом.
+step_port_finish() {
+  if [[ "$PORT_CHANGED" != 1 ]]; then return 0; fi
+  if [[ "$(psql_val 'SHOW port')" != "$DESIRED_PORT" ]]; then
+    die "PostgreSQL слушает не порт $DESIRED_PORT (проверьте conf.d и journalctl -u $SVC)"
+  fi
+  state_set DB_PORT "$DESIRED_PORT"
+  migrate_ufw_port "$PORT_OLD" "$DESIRED_PORT"
+  PORT_CHANGED=0
+  warn "Порт изменён: $PORT_OLD -> $DESIRED_PORT. Обновите строки подключения приложений; локально: psql -p $DESIRED_PORT"
+}
+
+cmd_port() { # cmd_port [порт|default|random]
+  ensure_running
+  local arg="${1:-}"
+  if [[ -n "$arg" ]]; then DB_PORT="$arg"; fi
+  select_port 1
+  step_port_config
+  if [[ "$PORT_CHANGED" == 1 ]]; then
+    warn "PostgreSQL будет перезапущен, активные подключения оборвутся."
+    confirm "Сменить порт $PORT_OLD -> $DESIRED_PORT?" || {
+      pg_conftool "$PG_VER" "$PG_CLUSTER" set port "$PORT_OLD"; PORT_CHANGED=0; log "Отменено"; return 0; }
+    systemctl restart "$SVC"
+    detect_cluster
+    wait_ready
+    step_port_finish
+    if [[ -x "$BACKUP_BIN" ]]; then step_backup; fi
+  fi
+}
+
 print_network_summary() {
   echo "--- Сеть ---"
   printf '  Режим:          %s\n' "$(state_get NETWORK_MODE)"
@@ -877,9 +1021,10 @@ step_tuning() {
   fi
   rm -f "$tmp"
 
-  if [[ "$need_restart" == 1 ]]; then
+  if [[ "$need_restart" == 1 || "$PORT_CHANGED" == 1 ]]; then
     log "Перезапускаю PostgreSQL для применения настроек"
     systemctl restart "$SVC"
+    if [[ "$PORT_CHANGED" == 1 ]]; then detect_cluster; fi
     wait_ready
   fi
 }
@@ -919,6 +1064,7 @@ step_backup() {
 set -Eeuo pipefail
 DIR="${BACKUP_DIR}"
 KEEP_DAYS="${BACKUP_RETENTION_DAYS}"
+export PGPORT="${PG_PORT}"
 EOF
     cat <<'EOF'
 stamp="$(date +%F_%H%M)"
@@ -991,7 +1137,10 @@ cmd_setup() {
   wait_ready
 
   select_network 0
+  select_port 0
+  step_port_config
   step_tuning
+  step_port_finish
   step_harden
   step_swap_sysctl
   step_backup
@@ -1314,6 +1463,7 @@ usage() {
   setup                                  анализ сервера, установка, режим сети, тюнинг (идемпотентно)
   analyze                                анализ ядер / RAM / диска
   network                                сменить режим сети: local | private | public (list/all)
+  port        [N|default|random]         сменить порт: 5432, свой или случайный свободный
   status                                 состояние сервиса, ресурсов и сети
   list                                   БД, пользователи, профили, правила доступа
 
@@ -1364,6 +1514,7 @@ menu() {
  17) Убрать IP-доступ
  18) Бэкап сейчас
  19) Включить файрвол (ufw)
+ 20) Сменить порт PostgreSQL
   0) Выход
 EOF
     read -r -p "Выбор: " choice || return 0
@@ -1387,6 +1538,7 @@ EOF
       17) "$SELF" access-del || true ;;
       18) "$SELF" backup-now || true ;;
       19) "$SELF" firewall-init || true ;;
+      20) "$SELF" port || true ;;
       0|q|Q) return 0 ;;
       *) warn "Неизвестный пункт" ;;
     esac
@@ -1411,6 +1563,7 @@ main() {
     setup)         cmd_setup "$@" ;;
     analyze)       cmd_analyze "$@" ;;
     network)       cmd_network "$@" ;;
+    port)          cmd_port "$@" ;;
     status)        cmd_status "$@" ;;
     list)          cmd_list "$@" ;;
     db-create)     cmd_db_create "$@" ;;
