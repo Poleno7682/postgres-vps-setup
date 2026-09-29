@@ -264,7 +264,7 @@ sudo ./pg_server_setup.sh
   - A database screen lets you **create a new user**, **select an existing one**, **delete a user** (revoke access to this database or delete completely), rename the database, change its owner or drop it.
   - Selecting a user shows the **connection details without the password** (IP, port, protocol, database, login, permissions, IP access), a copy-paste block and a URL to fill the password into, plus actions: **change the password**, change the profile, add or remove IP access, connection limit, rename and delete the user.
   - Separate items such as "Create database", "Change password" or "Delete user" were removed from the main menu: they now live inside the matching screens. The same commands (`db-create`, `user-passwd`, …) stay available for scripts.
-- **"Server status"** is a live dashboard: gauges and mini graphs (sparklines) over the last seconds for **CPU, load average, RAM, swap, disk and network**, and for PostgreSQL: **connections, transactions per second, cache hit ratio, uptime**. It refreshes every 2 seconds and exits on any key. Gauge colours show the load level (green, yellow, red).
+- **"Server status"** is a live dashboard: gauges and mini graphs (sparklines) over the last seconds for **CPU, load average, RAM, swap, disk and network**, and for PostgreSQL: **connections, transactions per second, cache hit ratio, uptime**. It refreshes every 2 seconds and exits on any key. Gauge colours show the load level (green, yellow, red). The `g` key switches the mini-graph style: `· ░ ▒ ▓ █` by default (present in every font, including PuTTY with Courier New) or the smooth `▁▂▃▄▅▆▇█`, which needs a font with the full block-element range. The choice is remembered.
 - **Back with `0`.** Every choice question (network mode, port, NAT, how to set a password, language and others) has a `0  Back` item. It cancels the current action and returns to the previous menu without an extra pause. Typing `0` in text questions (database name, IP, port, etc.) and at the password prompt does the same. Exception: in the connection-limit question `0` is an ordinary value (a user who may not connect).
 - **`setup`** shows `[3/8]` steps with a progress bar; package installation runs with a spinner and the verbose `apt` output is shown only on failure.
 - **Boxes and colours:** green — success, yellow — warnings and confirmations, red — errors, cyan — questions.
@@ -637,6 +637,7 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 | `PGMGR_PASSWORD` | ready-made password (Latin letters and digits, at least 6 characters) | generated |
 | `PGMGR_HOST` | IP or domain shown in the connection block and URL | auto-detected |
 | `PGMGR_ASCII` | `1`: ASCII boxes and icons instead of Unicode | unset |
+| `PGMGR_SPARK` | mini-graph style in the status view: `safe` / `fine` / `ascii` | `safe` (remembered via the `g` key) |
 
 ## What the script creates on the server
 
@@ -674,6 +675,7 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 | `password authentication failed` | Wrong password or name: `user-passwd <user>` |
 | `permission denied for table ...` | The tables were created by someone other than the database owner, or no profile was granted. Run migrations as the owner, check the profile in `list`, recreate the tables as the owner if needed |
 | `permission denied for database` | The user has no profile on the database: `user-role <user> <db> readwrite` |
+| Squares instead of graphs (PuTTY, old terminals) | The font lacks the character. The safe style `· ░ ▒ ▓ █` is the default (`g` in the status view switches style, `PGMGR_SPARK=safe`). For smooth graphs in PuTTY: pick a font with block characters in *Window → Appearance → Font* (DejaVu Sans Mono, Cascadia Mono, JetBrains Mono) and enable UTF-8 in *Window → Translation*. For pure ASCII: `PGMGR_ASCII=1` |
 | Script: `bad interpreter` / `\r` | Windows line endings: `sed -i 's/\r$//' pg_server_setup.sh` |
 | Swap was not created | Container virtualization does not allow swap: the warning can be ignored |
 | Service does not start after `setup` | `journalctl -u postgresql@<version>-main -n 50`; most often an error in third-party edits of `conf.d` |

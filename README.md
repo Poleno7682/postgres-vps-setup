@@ -634,6 +634,7 @@ sudo -u postgres psql -f /var/backups/postgresql/globals_2026-09-29_0300.sql
 | `PGMGR_PASSWORD` | готовый пароль (латиница и цифры, не менее 6 символов) | генерация |
 | `PGMGR_HOST` | IP или домен для блока подключения и ссылки | автоопределение |
 | `PGMGR_ASCII` | `1`: ASCII-рамки и значки вместо Unicode | не задана |
+| `PGMGR_SPARK` | вид мини-графиков в статусе: `safe` / `fine` / `ascii` | `safe` (запоминается по клавише `g`) |
 
 ## Что скрипт создаёт на сервере
 
@@ -671,6 +672,7 @@ sudo -u postgres psql -f /var/backups/postgresql/globals_2026-09-29_0300.sql
 | `password authentication failed` | Неверный пароль или имя: `user-passwd <user>` |
 | `permission denied for table ...` | Таблицы создал не владелец БД, или профиль не выдан. Выполняйте миграции от владельца, проверьте профиль в `list`, при необходимости пересоздайте таблицы от владельца |
 | `permission denied for database` | У пользователя нет профиля на БД: `user-role <user> <db> readwrite` |
+| Вместо графиков квадраты (PuTTY, старые терминалы) | Шрифт не содержит символ. Используется безопасный вид `· ░ ▒ ▓ █` (клавиша `g` в статусе переключает вид, `PGMGR_SPARK=safe`). Для плавных графиков в PuTTY: *Window → Appearance → Font* выберите шрифт с блочными символами (DejaVu Sans Mono, Cascadia Mono, JetBrains Mono), а в *Window → Translation* включите UTF-8. Для чистого ASCII: `PGMGR_ASCII=1` |
 | Скрипт: `bad interpreter` / `\r` | Windows-переводы строк: `sed -i 's/\r$//' pg_server_setup.sh` |
 | Не создался swap | Контейнерная виртуализация не разрешает swap: предупреждение безопасно проигнорировать |
 | Сервис не стартует после `setup` | `journalctl -u postgresql@<версия>-main -n 50`; чаще всего ошибка в сторонних правках `conf.d` |
