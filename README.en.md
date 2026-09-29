@@ -826,7 +826,7 @@ No telemetry, and passwords never leave the server. Network access is limited to
 <details>
 <summary><b>How do I update the script itself?</b></summary>
 
-Download the new version with the same command as for installation and run `setup`: the saved settings in `/etc/pgmgr/pgmgr.conf` are kept and new checks are applied.
+Leave the menu and run the command from [“Updating the script”](#updating-the-script): it downloads the latest version and safely replaces the file. Saved settings in `/etc/pgmgr/pgmgr.conf` are kept, and new checks are applied by the "Initial setup / re-check" item.
 
 </details>
 
@@ -838,6 +838,28 @@ See [“Removal”](#removal). Take backups first: the data will be lost.
 </details>
 
 ## Updates
+
+### Updating the script
+
+Leave the script's menu (item `0`) and run one command on the VPS. It downloads the latest version to a new file and replaces the old one:
+
+```bash
+cd /root && curl -fsSL https://raw.githubusercontent.com/Poleno7682/postgres-vps-setup/main/pg_server_setup.sh -o pg_server_setup.sh.new && chmod +x pg_server_setup.sh.new && mv pg_server_setup.sh.new pg_server_setup.sh
+```
+
+Then start the script as usual; it opens with the new menu:
+
+```bash
+sudo ./pg_server_setup.sh
+```
+
+- **Your data is untouched.** Databases, users, passwords, `pg_hba.conf` and the saved settings (language, network mode, port, external port in `/etc/pgmgr/pgmgr.conf`) stay as they were.
+- **To apply new checks to the system** (regenerate the backup script, the performance settings file and so on) use the "Initial setup / re-check" menu item or `sudo ./pg_server_setup.sh setup --recheck`. PostgreSQL is restarted only if the settings file changed.
+- If the script is not in `/root`, replace the path in the first command with yours. If you installed with `git clone`, simply run `git pull` in the repository directory.
+- Do not replace the file while the script is running (for example, with the menu open): bash reads a script as it executes, so swapping the file mid-run can break it. That is why the command downloads under another name and swaps it with `mv`.
+- To check that the version was updated, look at the file date (`ls -l pg_server_setup.sh`) or at the header of any script screen.
+
+### Updating the system and PostgreSQL
 
 - **PostgreSQL minor updates** (safe, only need a restart): `apt update && apt upgrade`.
 - **Re-running `setup`** after a hardware upgrade (for example, more RAM): recalculates the settings and restarts PostgreSQL.
