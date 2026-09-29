@@ -159,6 +159,23 @@ At the end of each command a connection details block is printed:
 
 The password is shown **only once**, at this final stage (after `setup` if you created the first database, and after `db-create`, `user-create` and `user-passwd`). It is never printed again: `status`, `list` and the menu do not show it. Save it to a password manager or your application's secrets immediately.
 
+Below the box the same data is printed again as **plain text without decoration**, ready to copy and paste, followed by a ready-to-use **connection URL** for project configuration (the password is URL-encoded, so special characters do not break it):
+
+```text
+Copy-paste details:
+IP: 203.0.113.9
+Port: 25762
+Database: myproject_db
+Login: myproject_owner
+Password: 3f9a1c7e5b2d80461a9e0c7d4b5f2e83
+SSL: sslmode=require
+
+Connection URL (for project configuration):
+postgresql://myproject_owner:3f9a1c7e5b2d80461a9e0c7d4b5f2e83@203.0.113.9:25762/myproject_db?sslmode=require
+```
+
+**How the IP is determined.** First the address PostgreSQL listens on. If it listens on `*` (all interfaces), the address of the interface or default route is used. If the server is behind NAT and no public IP is configured on any interface, the script asks the `api.ipify.org` service once for the external address (only in `public` mode and only in that situation; the result is cached). If detection fails, `setup` asks for the IP or domain and saves it. You can set the address manually with `PGMGR_HOST` (for example, a domain name).
+
 #### 4. Interactive menu
 
 Running without arguments opens a menu with all actions:
@@ -535,6 +552,8 @@ Mainly for non-interactive runs. The `-y` flag confirms all prompts.
 | `BACKUP_DIR` | backup directory | `/var/backups/postgresql` |
 | `BACKUP_RETENTION_DAYS` | dump retention, days | `14` |
 | `PGMGR_PASSWORD` | ready-made password (at least 12 characters) | generated |
+| `PGMGR_HOST` | IP or domain shown in the connection block and URL | auto-detected |
+| `PGMGR_ASCII` | `1`: ASCII boxes and icons instead of Unicode | unset |
 
 ## What the script creates on the server
 

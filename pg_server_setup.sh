@@ -128,6 +128,7 @@ ui_init() {
   case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
     *UTF-8*|*utf-8*|*UTF8*|*utf8*) UTF=1 ;;
   esac
+  if [[ "${PGMGR_ASCII:-}" == 1 ]]; then UTF=0; fi
 
   if [[ -z "${NO_COLOR:-}" ]]; then
     ncolors="$(tput colors 2>/dev/null || echo 8)"
@@ -304,6 +305,16 @@ pause_return() {
   read -r -p "  $(L "Нажмите Enter, чтобы вернуться в меню…" "Press Enter to return to the menu…")" _ || true
 }
 
+# Boxes and Russian text need character-based string lengths: on servers with a
+# POSIX/unset locale switch to C.UTF-8 (present on Debian/Ubuntu) when available.
+fix_locale() {
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8*|*utf-8*|*UTF8*|*utf8*) return 0 ;;
+  esac
+  if locale -a 2>/dev/null | grep -qix 'c\.utf-\?8'; then export LC_ALL=C.UTF-8; fi
+}
+
+fix_locale
 ui_init
 
 require_root() {
@@ -858,6 +869,7 @@ select_network() { # select_network [force=0]
   state_set ACCESS_POLICY "$policy"
   state_set DEFAULT_CIDRS "$cidrs"
   state_set LISTEN_ADDR "$final"
+  state_set PUBLIC_IP ""
   log "$(L "Сеть: режим=${mode}, listen=${final}, доступ=${policy} ${cidrs}" "Network: mode=${mode}, listen=${final}, access=${policy} ${cidrs}")"
   if [[ -n "$saved_mode" && ( "$saved_mode" != "$mode" || "$saved_policy" != "$policy" ) ]]; then
     warn "$(L "Режим изменён. Старые правила pg_hba могли остаться — проверьте: $SELF list" "Mode changed. Old pg_hba rules may remain — check: $SELF list")"
@@ -1015,9 +1027,30 @@ cmd_port() { # cmd_port [port|default|random]
 }
 
 # IP clients use to connect to this server (by network mode).
+route_src_ip() { # source IP of the default route
+  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}'
+}
+
+# Public address as seen from the internet (for servers behind NAT, where the
+# public IP is not configured on any interface). Asks a public IP-echo service.
+external_ip() {
+  local ip="" url
+  for url in https://api.ipify.org https://ifconfig.me/ip; do
+    ip="$(curl -4fsS --max-time 4 "$url" 2>/dev/null || true)"
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then printf '%s' "$ip"; return 0; fi
+  done
+  return 1
+}
+
+# IP or host clients use to connect to this server. Order: PGMGR_HOST env, saved
+# CONNECT_HOST, listen address, interface addresses, default-route source, public
+# IP-echo lookup (public mode only, result cached in the state file).
 connect_host() {
-  local mode listen it
+  local mode listen it ip
   local -a items
+  if [[ -n "${PGMGR_HOST:-}" ]]; then printf '%s\n' "$PGMGR_HOST"; return 0; fi
+  ip="$(state_get CONNECT_HOST)"
+  if [[ -n "$ip" ]]; then printf '%s\n' "$ip"; return 0; fi
   mode="$(state_get NETWORK_MODE)"
   listen="$(state_get LISTEN_ADDR)"
   if [[ "$mode" == local || -z "$listen" ]]; then echo "127.0.0.1"; return 0; fi
@@ -1028,9 +1061,37 @@ connect_host() {
     done
     echo "127.0.0.1"; return 0
   fi
+
+  # listen = '*': work out which address clients should use
   collect_ips "$mode"
   if (( ${#IP_CANDS[@]} > 0 )); then ip_of "${IP_CANDS[0]}"; return 0; fi
+  ip="$(route_src_ip)"
+  if [[ "$mode" == private ]]; then
+    if [[ -n "$ip" ]] && is_private_ip "$ip"; then echo "$ip"; return 0; fi
+  else
+    if [[ -n "$ip" ]] && ! is_private_ip "$ip"; then echo "$ip"; return 0; fi
+    ip="$(state_get PUBLIC_IP)"
+    if [[ -n "$ip" ]]; then echo "$ip"; return 0; fi
+    if ip="$(external_ip)"; then
+      state_set PUBLIC_IP "$ip"
+      echo "$ip"; return 0
+    fi
+  fi
   echo "<SERVER_IP>"
+}
+
+# If the address could not be detected, ask for it once (interactive runs).
+ensure_connect_host() {
+  local h
+  h="$(connect_host)"
+  if [[ "$h" == "<SERVER_IP>" && -t 0 && "$ASSUME_YES" != 1 ]]; then
+    warn "$(L "Не удалось определить IP сервера автоматически." "Could not detect the server IP automatically.")"
+    ask h "$(L "Введите IP или домен для подключения (Enter — пропустить)" "Enter the IP or domain clients connect to (Enter to skip)")" ""
+    if [[ -n "$h" ]]; then
+      state_set CONNECT_HOST "$h"
+      log "$(L "Адрес подключения сохранён: $h" "Connection address saved: $h")"
+    fi
+  fi
 }
 
 print_network_summary() {
@@ -1104,6 +1165,18 @@ SQL
   log "$(L "Создан пользователь '$u'" "User '$u' created")"
 }
 
+urlencode() { # percent-encode a string for use inside a URL
+  local LC_ALL=C s="$1" out="" c i
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out+="$c" ;;
+      *) out+="$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 # Databases the user can access (owner or rw/ro profile).
 user_databases() {
   psql_val "SELECT COALESCE(string_agg(db, ', ' ORDER BY db), '—') FROM (SELECT datname AS db FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname='$1') UNION SELECT regexp_replace(g.rolname, '_(rw|ro)\$', '') FROM pg_auth_members am JOIN pg_roles g ON g.oid=am.roleid JOIN pg_roles m ON m.oid=am.member WHERE m.rolname='$1' AND g.rolname ~ '_(rw|ro)\$') t"
@@ -1113,11 +1186,12 @@ user_databases() {
 # wiped from the script's memory and never printed again.
 show_credentials() { # user [db]
   [[ -n "$CREATED_PASSWORD" ]] || return 0
-  local u="$1" db="${2:-}"
+  local u="$1" db="${2:-}" host db1 url
   if [[ -z "$db" ]]; then db="$(user_databases "$u")"; fi
+  host="$(connect_host)"
   echo
   box_top "$(L "Данные для подключения" "Connection details")" "$C_GREEN"
-  box_kv "IP" "$(connect_host)"
+  box_kv "IP" "$host"
   box_kv "$(L "Порт" "Port")" "$PG_PORT"
   box_kv "$(L "Название БД" "Database")" "$db"
   box_kv "$(L "Логин" "Login")" "$u"
@@ -1126,6 +1200,23 @@ show_credentials() { # user [db]
   box_row "" ""
   box_row "$(L "Пароль показан один раз — сохраните его сейчас." "The password is shown only once — save it now.")" "$C_YELLOW"
   box_bottom
+
+  # Plain block for copy & paste (no colours, no decoration) and a ready-to-use URL.
+  db1="${db%%,*}"
+  url="postgresql://$(urlencode "$u"):$(urlencode "$CREATED_PASSWORD")@${host}:${PG_PORT}"
+  if [[ -n "$db1" && "$db1" != "—" ]]; then url="${url}/${db1}"; fi
+  url="${url}?sslmode=require"
+  echo
+  printf '%s\n' "$(L "Данные для копирования:" "Copy-paste details:")"
+  printf 'IP: %s\n' "$host"
+  printf '%s %s\n' "$(L "Порт:" "Port:")" "$PG_PORT"
+  printf '%s %s\n' "$(L "Название БД:" "Database:")" "$db"
+  printf '%s %s\n' "$(L "Логин:" "Login:")" "$u"
+  printf '%s %s\n' "$(L "Пароль:" "Password:")" "$CREATED_PASSWORD"
+  printf 'SSL: sslmode=require\n'
+  echo
+  printf '%s\n' "$(L "Ссылка для подключения (для конфигурации проектов):" "Connection URL (for project configuration):")"
+  printf '%s\n' "$url"
   echo
   CREATED_PASSWORD=""
   PASSWORD_INPUT=""
@@ -1555,6 +1646,7 @@ cmd_setup() {
 
   step_header 3 "$total" "$(L "Сеть и доступ" "Network and access")"
   select_network 0
+  ensure_connect_host
   step_header 4 "$total" "$(L "Порт" "Port")"
   select_port 0
   step_port_config
