@@ -758,6 +758,7 @@ cmd_port() { # cmd_port [порт|default|random]
 
 print_network_summary() {
   echo "--- Сеть ---"
+  printf '  IP подключения: %s\n' "$(connect_host)"
   printf '  Режим:          %s\n' "$(state_get NETWORK_MODE)"
   printf '  listen:         %s (порт %s)\n' "$(state_get LISTEN_ADDR)" "$PG_PORT"
   printf '  Политика:       %s\n' "$(state_get ACCESS_POLICY)"
@@ -819,21 +820,50 @@ SQL
   log "Создан пользователь '$u'"
 }
 
-show_credentials() { # user db
+# IP, по которому клиенты подключаются к серверу (по режиму сети).
+connect_host() {
+  local mode listen it
+  local -a items
+  mode="$(state_get NETWORK_MODE)"
+  listen="$(state_get LISTEN_ADDR)"
+  if [[ "$mode" == local || -z "$listen" ]]; then echo "127.0.0.1"; return 0; fi
+  if [[ "$listen" != '*' ]]; then
+    IFS=, read -ra items <<<"$listen"
+    for it in "${items[@]}"; do
+      if [[ "$it" != localhost ]]; then echo "$it"; return 0; fi
+    done
+    echo "127.0.0.1"; return 0
+  fi
+  collect_ips "$mode"
+  if (( ${#IP_CANDS[@]} > 0 )); then ip_of "${IP_CANDS[0]}"; return 0; fi
+  echo "<IP_СЕРВЕРА>"
+}
+
+# БД, к которым у пользователя есть доступ (владелец или профиль rw/ro).
+user_databases() {
+  psql_val "SELECT COALESCE(string_agg(db, ', ' ORDER BY db), '—') FROM (SELECT datname AS db FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname='$1') UNION SELECT regexp_replace(g.rolname, '_(rw|ro)\$', '') FROM pg_auth_members am JOIN pg_roles g ON g.oid=am.roleid JOIN pg_roles m ON m.oid=am.member WHERE m.rolname='$1' AND g.rolname ~ '_(rw|ro)\$') t"
+}
+
+# Итоговые данные для подключения. Пароль показывается ОДИН раз: после вывода
+# он стирается из памяти скрипта и нигде больше не печатается.
+show_credentials() { # user [db]
   [[ -n "$CREATED_PASSWORD" ]] || return 0
+  local u="$1" db="${2:-}"
+  if [[ -z "$db" ]]; then db="$(user_databases "$u")"; fi
   echo
-  echo "=============== Учётные данные (показываются один раз) ==============="
-  echo "  Пользователь: $1"
-  if [[ "$PASSWORD_GENERATED" == 1 ]]; then
-    echo "  Пароль:       $CREATED_PASSWORD"
-  else
-    echo "  Пароль:       (задан вами)"
-  fi
-  if [[ -n "${2:-}" ]]; then
-    echo "  DSN:          postgresql://$1:<пароль>@<HOST>:${PG_PORT}/$2?sslmode=require"
-  fi
-  echo "======================================================================"
+  echo "=================== Данные для подключения ==================="
+  printf '  IP:           %s\n' "$(connect_host)"
+  printf '  Порт:         %s\n' "$PG_PORT"
+  printf '  Название БД:  %s\n' "$db"
+  printf '  Логин:        %s\n' "$u"
+  printf '  Пароль:       %s\n' "$CREATED_PASSWORD"
+  echo "  SSL:          sslmode=require"
+  echo "--------------------------------------------------------------"
+  echo "  Пароль показан один раз — сохраните его сейчас."
+  echo "=============================================================="
   echo
+  CREATED_PASSWORD=""
+  PASSWORD_INPUT=""
 }
 
 # Создаёт (идемпотентно) группы <db>_rw / <db>_ro и настраивает их права,
@@ -1155,7 +1185,16 @@ cmd_setup() {
   fi
 
   print_network_summary
-  log "Готово. Дальше: $SELF db-create <имя_бд> [владелец] [IP-клиента]"
+  log "Сервер PostgreSQL настроен."
+
+  if [[ -t 0 && "$ASSUME_YES" != 1 ]] \
+     && [[ "$(psql_val "SELECT count(*) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres'")" == 0 ]]; then
+    if confirm "Создать первую БД и её владельца сейчас?"; then
+      cmd_db_create
+      return 0
+    fi
+  fi
+  log "Дальше: $SELF db-create <имя_бд> [владелец] [IP-клиента]"
 }
 
 cmd_network() { # смена режима сети (local / private / public) на уже установленном сервере
