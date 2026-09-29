@@ -1,5 +1,7 @@
 <div align="center">
 
+<a href="README.en.md"><img src="docs/button-en.svg" alt="English version: read this README in English" width="420"></a>
+
 <img src="docs/banner.ru.svg" alt="PostgreSQL на VPS: развёртывание и администрирование одним скриптом" width="100%">
 
 <p>

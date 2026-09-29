@@ -94,6 +94,35 @@ def banner(lang):
     return "\n".join(o) + "\n"
 
 
+def language_button(label, sub, path):
+    """Big call-to-action button linking to the other language version."""
+    w, h = 460, 84
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" role="img" aria-label="{escape(label)}">
+<defs>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
+<linearGradient id="shine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></linearGradient>
+<filter id="sh" x="-10%" y="-20%" width="120%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#4f46e5" flood-opacity="0.45"/></filter>
+</defs>
+<g filter="url(#sh)">
+<rect x="6" y="4" width="{w - 12}" height="{h - 14}" rx="{(h - 14) / 2:.0f}" fill="url(#g)"/>
+<rect x="6" y="4" width="{w - 12}" height="{(h - 14) / 2:.0f}" rx="{(h - 14) / 2:.0f}" fill="url(#shine)"/>
+</g>
+<circle cx="52" cy="{(h - 6) / 2:.0f}" r="24" fill="#ffffff" fill-opacity="0.18" stroke="#ffffff" stroke-opacity="0.7" stroke-width="2"/>
+<g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" transform="translate(52 {(h - 6) / 2:.0f})">
+<circle r="15"/><ellipse rx="6.5" ry="15"/><path d="M-15 0h30M-13 -7h26M-13 7h26"/>
+</g>
+<text x="92" y="{(h - 6) / 2 - 2:.0f}" font-family="{SANS}" font-size="26" font-weight="800" fill="#ffffff">{escape(label)}</text>
+<text x="93" y="{(h - 6) / 2 + 20:.0f}" font-family="{SANS}" font-size="14" fill="#e0e7ff">{escape(sub)}</text>
+<g transform="translate({w - 62} {(h - 6) / 2:.0f})" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+<path d="M-12 0h24M4 -9l9 9-9 9"/>
+</g>
+</svg>
+'''
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(svg)
+    print("wrote", os.path.normpath(path))
+
+
 def main():
     os.makedirs(os.path.join(ROOT, "docs"), exist_ok=True)
     for lang in ("ru", "en"):
@@ -101,6 +130,7 @@ def main():
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(banner(lang))
         print("wrote", os.path.normpath(path))
+    language_button("English version", "Read this README in English", os.path.join(ROOT, "docs", "button-en.svg"))
 
 
 if __name__ == "__main__":
