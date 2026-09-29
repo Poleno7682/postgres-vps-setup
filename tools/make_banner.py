@@ -131,6 +131,7 @@ def main():
             f.write(banner(lang))
         print("wrote", os.path.normpath(path))
     language_button("English version", "Read this README in English", os.path.join(ROOT, "docs", "button-en.svg"))
+    language_button("Русская версия", "Читать этот README на русском", os.path.join(ROOT, "docs", "button-ru.svg"))
 
 
 if __name__ == "__main__":
