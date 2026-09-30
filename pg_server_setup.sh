@@ -670,6 +670,11 @@ print_hw_report() {
 
 hba_file() { psql_val "SHOW hba_file"; }
 
+# Keep a copy of the original config the first time we touch it (portable, no cp flags needed).
+backup_once() {
+  if [[ ! -e "$1.pgmgr.orig" ]]; then cp "$1" "$1.pgmgr.orig"; fi
+}
+
 hba_drop_line() { # hba_drop_line file "exact line"
   local f="$1" line="$2"
   grep -vxF -- "$line" "$f" > "$f.pgmgr.tmp" || true
@@ -696,7 +701,7 @@ hba_add() { # hba_add db user cidr
   cidr="$(normalize_cidr "$3")"
   f="$(hba_file)"
   line="hostssl ${db} ${u} ${cidr} scram-sha-256 # ${TAG}:${db}:${u}"
-  cp -n "$f" "$f.pgmgr.orig" || true
+  backup_once "$f"
   if grep -qxF -- "$line" "$f"; then
     log "$(L "Правило pg_hba уже есть: $db / $u / $cidr" "pg_hba rule already exists: $db / $u / $cidr")"
   else
@@ -754,7 +759,7 @@ hba_del() { # hba_del db user  (db/user = '*' -> any)
   if [[ "$db" == "*" ]]; then db='[a-z0-9_]*'; fi
   if [[ "$u" == "*" ]]; then u='[a-z0-9_]*'; fi
   pat="# ${TAG}:${db}:${u}\$"
-  cp -n "$f" "$f.pgmgr.orig" || true
+  backup_once "$f"
   sed -i "/${pat}/d" "$f"
   reload_pg
 }
@@ -2126,7 +2131,7 @@ hba_add_many() { # hba_add_many cidr — a hostssl rule for every database/user 
   local cidr="$1" f line db u errs bak
   WL_ADDED=0
   f="$(hba_file)"
-  cp -n "$f" "$f.pgmgr.orig" || true
+  backup_once "$f"
   bak="$(mktemp)"
   cat "$f" > "$bak"
   if [[ -n "$(tail -c1 "$f")" ]]; then echo >> "$f"; fi
@@ -2151,7 +2156,7 @@ hba_del_cidr() { # remove every script-managed rule that uses this source addres
   local esc f
   esc="${1//./\.}"
   f="$(hba_file)"
-  cp -n "$f" "$f.pgmgr.orig" || true
+  backup_once "$f"
   sed -i "\|^hostssl [a-z0-9_]* [a-z0-9_]* ${esc} scram-sha-256 # ${TAG}:|d" "$f"
 }
 
