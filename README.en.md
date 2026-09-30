@@ -43,6 +43,7 @@ The script is **idempotent**: running it again checks what is already installed 
 - [Terminal interface and screenshots](#terminal-interface)
 - [What `setup` does](#what-setup-does)
 - [Network modes](#network-modes)
+- [IP whitelist](#ip-whitelist)
 - [PostgreSQL port](#postgresql-port) and [NAT](#nat-external-port-and-protocol)
 - [Isolation model and roles](#isolation-model-and-roles)
 - [Command reference](#command-reference)
@@ -259,7 +260,7 @@ sudo ./pg_server_setup.sh
 ## Terminal interface
 
 - **A separate screen for every item.** Before each action the console is cleared and a banner plus a section title is drawn, so earlier output never gets in the way. After the action the script waits for `Enter` and returns to the menu (so a password stays on screen until you have saved it).
-- **The main menu** is grouped (Server, Databases and users, Other) and shows live status: PostgreSQL version and state, port, network mode, database count. Managing databases and users lives in one **"Databases"** section built as navigation: **database list → a database → a user**.
+- **The main menu** is grouped (Server, Databases and users, Access, Other) and shows live status: PostgreSQL version and state, port, network mode, database count. Managing databases and users lives in one **"Databases"** section built as navigation: **database list → a database → a user**.
   - The database list shows the owner, size and number of users; it also has "Create a new database".
   - A database screen lets you **create a new user**, **select an existing one**, **delete a user** (revoke access to this database or delete completely), rename the database, change its owner or drop it.
   - Selecting a user shows the **connection details without the password** (IP, port, protocol, database, login, permissions, IP access), a copy-paste block and a URL to fill the password into, plus actions: **change the password**, change the profile, add or remove IP access, connection limit, rename and delete the user.
@@ -277,10 +278,12 @@ The images are generated from the script's real UI code with sample data (`tools
 <table>
 <tr><td width="50%" align="center" valign="top"><b>Main menu</b><br><br><img src="docs/screenshots/menu.en.svg" alt="Main menu" width="100%"></td><td width="50%" align="center" valign="top"><b>Server status: live load graphs</b><br><br><img src="docs/screenshots/status.en.svg" alt="Server status: live load graphs" width="100%"></td></tr>
 <tr><td width="50%" align="center" valign="top"><b>Databases</b><br><br><img src="docs/screenshots/databases.en.svg" alt="Databases" width="100%"></td><td width="50%" align="center" valign="top"><b>One database: users and actions</b><br><br><img src="docs/screenshots/database.en.svg" alt="One database: users and actions" width="100%"></td></tr>
-<tr><td width="50%" align="center" valign="top"><b>User: connection details without the password</b><br><br><img src="docs/screenshots/user.en.svg" alt="User: connection details without the password" width="100%"></td><td width="50%" align="center" valign="top"><b>Initial setup</b><br><br><img src="docs/screenshots/setup.en.svg" alt="Initial setup" width="100%"></td></tr>
-<tr><td width="50%" align="center" valign="top"><b>Resuming after an interruption</b><br><br><img src="docs/screenshots/resume.en.svg" alt="Resuming after an interruption" width="100%"></td><td width="50%" align="center" valign="top"><b>Summary: network and "Done"</b><br><br><img src="docs/screenshots/network.en.svg" alt="Summary: network and "Done"" width="100%"></td></tr>
-<tr><td colspan="2" align="center" valign="top"><b>Connection details (the password is shown once; the one in the screenshot is a placeholder)</b><br><br><img src="docs/screenshots/creds.en.svg" alt="Connection details (the password is shown once; the one in the screenshot is a placeholder)" width="60%"></td></tr>
+<tr><td width="50%" align="center" valign="top"><b>User: connection details without the password</b><br><br><img src="docs/screenshots/user.en.svg" alt="User: connection details without the password" width="100%"></td><td width="50%" align="center" valign="top"><b>IP whitelist</b><br><br><img src="docs/screenshots/whitelist.en.svg" alt="IP whitelist" width="100%"></td></tr>
+<tr><td width="50%" align="center" valign="top"><b>Initial setup</b><br><br><img src="docs/screenshots/setup.en.svg" alt="Initial setup" width="100%"></td><td width="50%" align="center" valign="top"><b>Resuming after an interruption</b><br><br><img src="docs/screenshots/resume.en.svg" alt="Resuming after an interruption" width="100%"></td></tr>
+<tr><td colspan="2" align="center" valign="top"><b>Summary: network and "Done"</b><br><br><img src="docs/screenshots/network.en.svg" alt="Summary: network and "Done"" width="60%"></td></tr>
 </table>
+
+<p align="center"><b>Connection details</b> (the password is shown once; the one in the screenshot is a placeholder)<br><br><img src="docs/screenshots/creds.en.svg" alt="Connection details" width="60%"></p>
 
 ## What `setup` does
 
@@ -342,6 +345,31 @@ The mode is chosen on the first `setup` (interactively or via environment variab
 
 > [!NOTE]
 > Even with the `all` policy, `pg_hba.conf` rules are created **for a specific "database + user" pair**, not "everyone to everything". Authentication is `scram-sha-256`, and the connection type is `hostssl` (SSL only).
+
+## IP whitelist
+
+The whitelist is one shared list of addresses (IPs and networks) allowed to connect to PostgreSQL. An address you add goes **everywhere it is needed at once**:
+
+1. into the script's saved settings (it becomes the default for new databases and users);
+2. into `pg_hba.conf`: a `hostssl … scram-sha-256` rule for **every** "database + user" pair (owners and members of the `_rw` / `_ro` groups), with a syntax check and rollback on error;
+3. into the `ufw` firewall: the PostgreSQL port is opened for that address (if `ufw` is off, the script offers to enable it).
+
+Manage it from the "IP whitelist" menu item or with commands:
+
+```bash
+sudo ./pg_server_setup.sh whitelist add 203.0.113.10,198.51.100.0/24
+```
+
+```bash
+sudo ./pg_server_setup.sh whitelist del 203.0.113.10
+```
+
+- `whitelist` (or `list`) shows the list: for each address the number of `pg_hba` rules and the `ufw` state.
+- `whitelist add` takes one or several comma-separated addresses (IP or CIDR). Adding twice is safe.
+- `whitelist del` removes the address everywhere: from the list, from all `pg_hba.conf` rules (including ones added via `access-add`) and from `ufw`.
+- `whitelist sync` re-applies the whole list to all databases, users and the firewall. Useful after creating a new database or user, and after enabling `ufw`.
+- `0.0.0.0/0` (everyone) cannot be put on the whitelist: it is set by the `public` + `all` network mode (`network`).
+- In `local` mode remote access is off: the address is saved and starts working after you change the mode.
 
 ## PostgreSQL port
 
@@ -449,6 +477,7 @@ Arguments you do not pass are requested interactively. The `-y` flag disables co
 | `user-limit [user] [N]` | Concurrent connection limit (`-1`: unlimited) |
 | `user-rename [old] [new]` | Rename a user |
 | `user-drop [user]` | Drop a user |
+| `whitelist [list\|add\|del\|sync] [ip]` | IP whitelist: an address goes into `pg_hba.conf` for **all** databases and users and into `ufw` at once |
 | `access-add [db] [user] [ip,cidr,...]` | Allow remote access (`pg_hba` + `ufw`) |
 | `access-del [db\|*] [user\|*]` | Remove access rules |
 | `backup-now` | Run a backup right now |
@@ -738,6 +767,13 @@ Least privilege. The owner creates and changes tables (migrations), while the ap
 <summary><b>Can I keep several projects on one server?</b></summary>
 
 Yes, that is the main purpose of the script. Every project gets its own database, and `CONNECT` plus schema rights are revoked from `PUBLIC`, so a user of one project cannot see or read another project's database.
+
+</details>
+
+<details>
+<summary><b>How do I allow connections from a new IP (for example, my address changed)?</b></summary>
+
+In the menu choose "IP whitelist" → "Add an IP / network", or run `sudo ./pg_server_setup.sh whitelist add NEW_IP`. The address immediately appears in `pg_hba.conf` for all databases and users and is opened in `ufw`. Remove the old address with "Remove an IP / network".
 
 </details>
 

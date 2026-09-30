@@ -26,7 +26,7 @@ state_get() {
     NETWORK_MODE)  echo public ;;
     LISTEN_ADDR)   echo "localhost,203.0.113.9" ;;
     ACCESS_POLICY) echo list ;;
-    DEFAULT_CIDRS) echo "203.0.113.10/32,198.51.100.0/24" ;;
+    DEFAULT_CIDRS) echo "203.0.113.10/32,198.51.100.0/24,10.8.0.5/32" ;;
     LANG_UI)       echo "$LANG_CHOICE" ;;
     SETUP_LAST_STEP) echo 5 ;;
     EXTERNAL_PORT) echo 37412 ;;
@@ -159,6 +159,14 @@ screen_status() {
   S_VERSION="17.11"; S_SVC_STATE="$(L "работает" "running")"; S_UFW="$(L "включён" "enabled")"; S_BACKUP="2026-09-29 03:00"
   hostname() { echo pg-server-01; }
   render_status_frame live
+}
+
+wl_entry_stats() { case "$1" in 10.8.0.5/32) echo "3|missing" ;; *) echo "3|ok" ;; esac; }
+ufw_active() { return 0; }
+
+screen_whitelist() {
+  render_whitelist_screen
+  demo_prompt 3 1
 }
 
 "screen_${SCREEN}"

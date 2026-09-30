@@ -2098,6 +2098,219 @@ cmd_access_del() {
   log "$(L "Правила pg_hba для $db / $u удалены. Правила ufw (если были) проверьте: ufw status numbered" "pg_hba rules for $db / $u removed. Check ufw rules (if any): ufw status numbered")"
 }
 
+# ---- IP whitelist: one list feeding pg_hba.conf (every DB/user pair) and ufw ---------
+
+wl_entries() { state_get DEFAULT_CIDRS | tr ',' '\n' | sed '/^$/d'; }
+
+wl_state_add() { # wl_state_add cidr
+  local cur
+  cur="$(state_get DEFAULT_CIDRS)"
+  if [[ ",${cur}," != *",$1,"* ]]; then state_set DEFAULT_CIDRS "${cur:+$cur,}$1"; fi
+}
+
+wl_state_del() { # wl_state_del cidr
+  local c out=""
+  while read -r c; do
+    if [[ -n "$c" && "$c" != "$1" ]]; then out="${out:+$out,}$c"; fi
+  done < <(wl_entries)
+  state_set DEFAULT_CIDRS "$out"
+}
+
+# db|user for the owner of every database and for every member of its rw/ro groups
+db_user_pairs() {
+  psql_admin -At -F '|' -d postgres -c "SELECT datname, pg_get_userbyid(datdba) FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' UNION SELECT regexp_replace(g.rolname, '_(rw|ro)\$', ''), m.rolname FROM pg_auth_members am JOIN pg_roles g ON g.oid = am.roleid JOIN pg_roles m ON m.oid = am.member WHERE g.rolname ~ '_(rw|ro)\$' AND EXISTS (SELECT 1 FROM pg_database d WHERE d.datname = regexp_replace(g.rolname, '_(rw|ro)\$', '')) ORDER BY 1, 2" 2>/dev/null || true
+}
+
+WL_ADDED=0
+hba_add_many() { # hba_add_many cidr — a hostssl rule for every database/user pair (no reload)
+  local cidr="$1" f line db u errs bak
+  WL_ADDED=0
+  f="$(hba_file)"
+  cp -n "$f" "$f.pgmgr.orig" || true
+  bak="$(mktemp)"
+  cat "$f" > "$bak"
+  if [[ -n "$(tail -c1 "$f")" ]]; then echo >> "$f"; fi
+  while IFS='|' read -r db u; do
+    if [[ -z "$db" || -z "$u" ]]; then continue; fi
+    line="hostssl ${db} ${u} ${cidr} scram-sha-256 # ${TAG}:${db}:${u}"
+    if ! grep -qxF -- "$line" "$f"; then
+      printf '%s\n' "$line" >> "$f"
+      WL_ADDED=$(( WL_ADDED + 1 ))
+    fi
+  done < <(db_user_pairs)
+  errs="$(psql_val "SELECT count(*) FROM pg_hba_file_rules WHERE error IS NOT NULL")"
+  if [[ "$errs" != 0 ]]; then
+    cat "$bak" > "$f"
+    rm -f "$bak"
+    die "$(L "pg_hba.conf стал некорректным — изменения откачены" "pg_hba.conf became invalid — the changes were rolled back")"
+  fi
+  rm -f "$bak"
+}
+
+hba_del_cidr() { # remove every script-managed rule that uses this source address
+  local esc f
+  esc="${1//./\.}"
+  f="$(hba_file)"
+  cp -n "$f" "$f.pgmgr.orig" || true
+  sed -i "\|^hostssl [a-z0-9_]* [a-z0-9_]* ${esc} scram-sha-256 # ${TAG}:|d" "$f"
+}
+
+ufw_rule_present() { # ufw_rule_present cidr
+  local key="${1%/32}"
+  ufw status 2>/dev/null | awk -v p="${PG_PORT}/tcp" -v k="$key" '{a = $3; if (a == "IN") a = $4} $1 == p && $2 == "ALLOW" && a == k {f = 1} END {exit !f}'
+}
+
+ufw_remove() { ufw --force delete allow from "$1" to any port "$PG_PORT" proto tcp >/dev/null 2>&1 || true; }
+
+# Opens the port for the given sources in ufw; if ufw is off, offers to enable it.
+wl_firewall_apply() { # wl_firewall_apply cidr...
+  local c
+  if ufw_active; then
+    for c in "$@"; do ufw_allow "$c"; done
+  else
+    warn "$(L "Файрвол ufw не активен: адрес добавлен только в pg_hba.conf." "The ufw firewall is not active: the address was added to pg_hba.conf only.")"
+    if [[ -t 0 && "$ASSUME_YES" != 1 ]]; then
+      if confirm "$(L "Включить ufw и открыть порт для белого списка?" "Enable ufw and open the port for the whitelist?")"; then
+        ASSUME_YES=1 cmd_firewall_init
+      fi
+    fi
+  fi
+}
+
+wl_entry_stats() { # "<pg_hba rules>|<ok|missing|off>" for one entry
+  local c="$1" n=0 st f
+  f="$(hba_file 2>/dev/null || true)"
+  if [[ -n "$f" ]]; then n="$(grep -c -F " ${c} scram-sha-256 # ${TAG}:" "$f" || true)"; fi
+  if ufw_active; then
+    if ufw_rule_present "$c"; then st=ok; else st=missing; fi
+  else
+    st=off
+  fi
+  echo "${n:-0}|${st}"
+}
+
+render_whitelist_body() {
+  local mode policy ufw_state c hba_n ufw_s n=0 mark ucol
+  mode="$(state_get NETWORK_MODE)"
+  policy="$(state_get ACCESS_POLICY)"
+  if ufw_active; then ufw_state="$(L "включён" "enabled")"; else ufw_state="$(L "выключен" "disabled")"; fi
+  echo
+  box_top "$(L "Белый список IP" "IP whitelist")" "$C_CYAN"
+  box_kv "$(L "Режим сети" "Network mode")" "${mode:-—} · $(L "политика" "policy"): ${policy:-—}"
+  box_kv "$(L "Порт / ufw" "Port / ufw")" "${PG_PORT} · ufw: ${ufw_state}"
+  box_row "" ""
+  box_row "$(L "Адрес из списка попадает в pg_hba.conf для всех БД и пользователей" "An address on the list goes into pg_hba.conf for all databases and users")" "$C_DIM"
+  box_row "$(L "и сразу открывается в файрволе на порту PostgreSQL." "and is opened in the firewall on the PostgreSQL port at once.")" "$C_DIM"
+  box_bottom
+  section "$(L "Разрешённые IP / сети" "Allowed IPs / networks")"
+  while read -r c; do
+    if [[ -z "$c" ]]; then continue; fi
+    n=$(( n + 1 ))
+    IFS='|' read -r hba_n ufw_s <<<"$(wl_entry_stats "$c")"
+    if [[ "$hba_n" -gt 0 ]]; then ucol="$C_GREEN"; else ucol="$C_YELLOW"; fi
+    case "$ufw_s" in
+      ok)      mark="${C_GREEN}${I_OK} ufw${C_RESET}" ;;
+      missing) mark="${C_RED}${I_ERR} ufw: $(L "нет правила" "no rule")${C_RESET}" ;;
+      *)       mark="${C_DIM}ufw: —${C_RESET}" ;;
+    esac
+    printf '    %s%s%s  %s  %s%s%s  %s\n' "$C_GREEN" "$I_DOT" "$C_RESET" "$(padr "$c" 20)" "$ucol" "pg_hba: ${hba_n}" "$C_RESET" "$mark"
+    if [[ "$c" == "0.0.0.0/0" ]]; then
+      printf '      %s%s%s\n' "$C_YELLOW" "$(L "доступ для всех (режим public + all)" "open to everyone (public + all mode)")" "$C_RESET"
+    fi
+  done < <(wl_entries)
+  if (( n == 0 )); then
+    printf '    %s%s%s\n' "$C_DIM" "$(L "Список пуст: удалённый доступ не разрешён никому." "The list is empty: nobody is allowed remote access.")" "$C_RESET"
+  fi
+}
+
+wl_add() { # wl_add ["ip,cidr,..."]
+  ensure_running
+  local input="${1:-}" list c mode policy
+  local -a arr
+  if [[ -z "$input" ]]; then
+    info "$(L "Можно несколько адресов через запятую: 203.0.113.10, 198.51.100.0/24" "Several addresses may be given, comma-separated: 203.0.113.10, 198.51.100.0/24")"
+    ask input "$(L "IP или сеть (CIDR) для белого списка" "IP or network (CIDR) for the whitelist")"
+  fi
+  list="$(normalize_cidr_list "$input")" || exit 1
+  [[ -n "$list" ]] || die "$(L "Пустой список адресов" "Empty address list")"
+  if [[ ",$list," == *",0.0.0.0/0,"* ]]; then
+    die "$(L "0.0.0.0/0 (доступ для всех) задаётся режимом сети: $SELF network" "0.0.0.0/0 (everyone) is set by the network mode: $SELF network")"
+  fi
+  mode="$(state_get NETWORK_MODE)"
+  policy="$(state_get ACCESS_POLICY)"
+  if [[ "$mode" == local ]]; then
+    warn "$(L "Режим сети local: удалённый доступ выключен. Адрес сохранится, но заработает после смены режима ($SELF network)." "Network mode is local: remote access is off. The address is saved but will only work after you change the mode ($SELF network).")"
+  elif [[ "$policy" == all ]]; then
+    info "$(L "Сейчас доступ открыт всем (public + all). Адрес сохранён в списке на случай смены политики." "Access is currently open to everyone (public + all). The address is kept on the list in case the policy changes.")"
+  fi
+  IFS=, read -ra arr <<<"$list"
+  for c in "${arr[@]}"; do
+    wl_state_add "$c"
+    hba_add_many "$c"
+    log "$(L "pg_hba.conf: $c — новых правил: $WL_ADDED" "pg_hba.conf: $c — new rules: $WL_ADDED")"
+  done
+  reload_pg
+  wl_firewall_apply "${arr[@]}"
+  log "$(L "Белый список обновлён: $list" "Whitelist updated: $list")"
+}
+
+wl_del() { # wl_del [cidr]
+  ensure_running
+  local target="${1:-}" c choice=1
+  local -a items=()
+  while read -r c; do
+    if [[ -n "$c" ]]; then items+=("$c"); fi
+  done < <(wl_entries)
+  (( ${#items[@]} > 0 )) || die "$(L "Белый список пуст" "The whitelist is empty")"
+  if [[ -z "$target" ]]; then
+    pick choice "$(L "Какой адрес удалить?" "Which address to remove?")" 1 "${items[@]}"
+    target="${items[choice-1]}"
+  else
+    target="$(normalize_cidr "$target")" || exit 1
+  fi
+  warn "$(L "Будут удалены все правила pg_hba.conf с адресом $target (в том числе добавленные через access-add) и правило ufw." "All pg_hba.conf rules with the address $target (including ones added via access-add) and its ufw rule will be removed.")"
+  confirm "$(L "Удалить $target из белого списка?" "Remove $target from the whitelist?")" || { log "$(L "Отменено" "Cancelled")"; return 0; }
+  hba_del_cidr "$target"
+  wl_state_del "$target"
+  reload_pg
+  if ufw_active; then
+    ufw_remove "$target"
+    log "$(L "ufw: правило для $target удалено" "ufw: the rule for $target was removed")"
+  fi
+  log "$(L "$target удалён из белого списка и pg_hba.conf" "$target was removed from the whitelist and pg_hba.conf")"
+}
+
+wl_sync() { # re-apply the whole list to every database/user pair and to ufw
+  ensure_running
+  local c total=0
+  local -a all=()
+  while read -r c; do
+    if [[ -z "$c" || "$c" == "0.0.0.0/0" ]]; then continue; fi
+    all+=("$c")
+    hba_add_many "$c"
+    total=$(( total + WL_ADDED ))
+  done < <(wl_entries)
+  if (( ${#all[@]} == 0 )); then
+    warn "$(L "В белом списке нет адресов для синхронизации." "There are no addresses on the whitelist to synchronise.")"
+    return 0
+  fi
+  reload_pg
+  wl_firewall_apply "${all[@]}"
+  log "$(L "Синхронизация завершена: адресов ${#all[@]}, новых правил pg_hba: $total" "Synchronisation finished: ${#all[@]} addresses, new pg_hba rules: $total")"
+}
+
+cmd_whitelist() { # cmd_whitelist [list|add|del|sync] [args]
+  local sub="${1:-list}"
+  if [[ $# -gt 0 ]]; then shift; fi
+  case "$sub" in
+    list)        ensure_running; render_whitelist_body ;;
+    add)         wl_add "$@" ;;
+    del|remove)  wl_del "$@" ;;
+    sync)        wl_sync ;;
+    *) die "$(L "Использование: whitelist [list|add|del|sync] [ip/cidr]" "Usage: whitelist [list|add|del|sync] [ip/cidr]")" ;;
+  esac
+}
+
 # ------------------------------------------------------ information ----
 
 cmd_list() {
@@ -2453,6 +2666,7 @@ Usage: $(basename "$SELF") [-y] <command> [arguments]
   user-rename [old] [new]                rename a user
   user-drop   [user]                     drop a user
 
+  whitelist   [list|add|del|sync] [ip]   IP whitelist: one address -> pg_hba.conf for ALL databases/users + ufw
   access-add  [db] [user] [ip,cidr,...] allow remote access (pg_hba + ufw)
   access-del  [db|*] [user|*]            remove access rules
   backup-now                             run a backup now
@@ -2487,6 +2701,7 @@ EOF
   user-rename [old] [new]                переименовать пользователя
   user-drop   [user]                     удалить пользователя
 
+  whitelist   [list|add|del|sync] [ip]   белый список IP: адрес -> pg_hba.conf для ВСЕХ БД и пользователей + ufw
   access-add  [db] [user] [ip,cidr,...]  разрешить удалённый доступ (pg_hba + ufw)
   access-del  [db|*] [user|*]            убрать правила доступа
   backup-now                             выполнить бэкап сейчас
@@ -2513,6 +2728,8 @@ MENU_DEF=(
   "backup-now|Бэкап сейчас|Backup now"
   "#|Базы данных и пользователи|Databases and users"
   "@databases|Базы данных: просмотр и управление|Databases: browse and manage"
+  "#|Доступ|Access"
+  "@whitelist|Белый список IP (pg_hba.conf + файрвол)|IP whitelist (pg_hba.conf + firewall)"
   "#|Прочее|Other"
   "lang|Язык сообщений (en / ru)|Message language (en / ru)"
 )
@@ -2840,6 +3057,35 @@ screen_user() { # screen_user db user
   done
 }
 
+# ---- Whitelist screen ---------------------------------------------------------------
+
+render_whitelist_screen() {
+  screen_begin "$(L "Белый список IP" "IP whitelist")"
+  render_whitelist_body
+  section "$(L "Действия" "Actions")"
+  menu_item 1 "$(L "Добавить IP / сеть" "Add an IP / network")"
+  menu_item 2 "$(L "Удалить IP / сеть" "Remove an IP / network")"
+  menu_item 3 "$(L "Синхронизировать: применить список ко всем БД и файрволу" "Synchronise: apply the list to all databases and the firewall")"
+  menu_back
+}
+
+screen_whitelist() {
+  local choice
+  while true; do
+    detect_cluster
+    render_whitelist_screen
+    menu_prompt choice 3 || return 0
+    if [[ -z "$choice" ]]; then continue; fi
+    case "$choice" in
+      0|q|Q) return 0 ;;
+      1) menu_run whitelist add ;;
+      2) menu_run whitelist del ;;
+      3) menu_run whitelist sync ;;
+      *) warn "$(L "Неизвестный пункт: $choice" "Unknown item: $choice")"; sleep 1 ;;
+    esac
+  done
+}
+
 # ---- Main menu ---------------------------------------------------------------------
 
 render_menu() {
@@ -2879,6 +3125,7 @@ menu() {
     fi
     case "$cmd" in
       @databases) screen_databases ;;
+      @whitelist) screen_whitelist ;;
       setup)      menu_run setup --recheck ;;
       status)     PGMGR_FROM_MENU=1 "$SELF" status || true ;;
       lang)
@@ -2917,6 +3164,7 @@ cmd_title() { # screen title for a command
     user-drop)     L "Удаление пользователя" "Drop user" ;;
     access-add)    L "Добавить IP-доступ" "Add IP access" ;;
     access-del)    L "Убрать IP-доступ" "Remove IP access" ;;
+    whitelist)     L "Белый список IP" "IP whitelist" ;;
     lang)          L "Язык сообщений" "Message language" ;;
     *)             printf '%s' "$1" ;;
   esac
@@ -2963,6 +3211,7 @@ main() {
     user-limit)    cmd_user_limit "$@" ;;
     user-rename)   cmd_user_rename "$@" ;;
     user-drop)     cmd_user_drop "$@" ;;
+    whitelist)     cmd_whitelist "$@" ;;
     access-add)    cmd_access_add "$@" ;;
     access-del)    cmd_access_del "$@" ;;
     backup-now)    cmd_backup_now "$@" ;;
