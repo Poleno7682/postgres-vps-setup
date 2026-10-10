@@ -398,14 +398,43 @@ gb() { awk -v m="$1" 'BEGIN{printf "%.1f", m/1024}'; }
 
 # ------------------------------------------------------------ validation ----
 
+valid_db_name()   { [[ "$1" =~ ^[a-z_][a-z0-9_]{0,59}$ ]]; }
+valid_user_name() { [[ "$1" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]; }
+
 validate_db() {
-  [[ "$1" =~ ^[a-z_][a-z0-9_]{0,59}$ ]] \
+  valid_db_name "$1" \
     || die "$(L "Недопустимое имя БД '$1' (a-z, 0-9, _; начинается с буквы/_; до 60 символов)" "Invalid database name '$1' (a-z, 0-9, _; must start with a letter/_; up to 60 chars)")"
 }
 
 validate_user() {
-  [[ "$1" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] \
+  valid_user_name "$1" \
     || die "$(L "Недопустимое имя пользователя '$1' (a-z, 0-9, _; до 63 символов)" "Invalid user name '$1' (a-z, 0-9, _; up to 63 chars)")"
+}
+
+# Asks for a database / user name and keeps asking until it is valid: an empty or invalid
+# answer prints the reason and repeats the question instead of aborting the script.
+# "0" still means "back" (handled by ask). ask_name VAR db|user "question" [default]
+ask_name() {
+  local __var="$1" __kind="$2" __q="$3" __def="${4:-}" __val="" __ok=0
+  while true; do
+    ask __val "$__q" "$__def"
+    if [[ -z "$__val" ]]; then
+      warn "$(L "Имя не может быть пустым. Введите имя ещё раз." "The name cannot be empty. Please enter it again.")"
+      continue
+    fi
+    if [[ "$__kind" == db ]]; then
+      if valid_db_name "$__val"; then __ok=1; fi
+    else
+      if valid_user_name "$__val"; then __ok=1; fi
+    fi
+    if (( __ok )); then break; fi
+    if [[ "$__kind" == db ]]; then
+      warn "$(L "Недопустимое имя БД '$__val': только a-z, 0-9 и _, начинается с буквы или _, до 60 символов. Попробуйте ещё раз." "Invalid database name '$__val': only a-z, 0-9 and _, must start with a letter or _, up to 60 characters. Please try again.")"
+    else
+      warn "$(L "Недопустимое имя пользователя '$__val': только a-z, 0-9 и _, до 63 символов. Попробуйте ещё раз." "Invalid user name '$__val': only a-z, 0-9 and _, up to 63 characters. Please try again.")"
+    fi
+  done
+  printf -v "$__var" '%s' "$__val"
 }
 
 normalize_profile() { # -> owner|readwrite|readonly|none
@@ -2080,9 +2109,9 @@ cmd_retune() {
 cmd_db_create() {
   ensure_running
   local db="${1:-}" owner="${2:-}" cidr="${3:-}" enc
-  if [[ -z "$db" ]]; then ask db "$(L "Имя БД (например calculate_db)" "Database name (e.g. myproject_db)")"; fi
+  if [[ -z "$db" ]]; then ask_name db db "$(L "Имя БД (например calculate_db)" "Database name (e.g. myproject_db)")"; fi
   validate_db "$db"
-  if [[ -z "$owner" ]]; then ask owner "$(L "Владелец БД" "Database owner")" "${db}_owner"; fi
+  if [[ -z "$owner" ]]; then ask_name owner user "$(L "Владелец БД" "Database owner")" "${db}_owner"; fi
   validate_user "$owner"
   resolve_cidrs "$cidr"
 
@@ -2116,7 +2145,7 @@ SQL
 cmd_db_drop() {
   ensure_running
   local db="${1:-}" owner f
-  if [[ -z "$db" ]]; then ask db "$(L "Имя БД для УДАЛЕНИЯ" "Database name to DROP")"; fi
+  if [[ -z "$db" ]]; then ask_name db db "$(L "Имя БД для УДАЛЕНИЯ" "Database name to DROP")"; fi
   validate_db "$db"
   db_exists "$db" || die "$(L "БД '$db' не существует" "Database '$db' does not exist")"
   owner="$(db_owner "$db")"
@@ -2146,8 +2175,8 @@ cmd_db_drop() {
 cmd_db_rename() {
   ensure_running
   local old="${1:-}" new="${2:-}" suf f
-  if [[ -z "$old" ]]; then ask old "$(L "Текущее имя БД" "Current database name")"; fi
-  if [[ -z "$new" ]]; then ask new "$(L "Новое имя БД" "New database name")"; fi
+  if [[ -z "$old" ]]; then ask_name old db "$(L "Текущее имя БД" "Current database name")"; fi
+  if [[ -z "$new" ]]; then ask_name new db "$(L "Новое имя БД" "New database name")"; fi
   validate_db "$old"; validate_db "$new"
   db_exists "$old" || die "$(L "БД '$old' не существует" "Database '$old' does not exist")"
   ! db_exists "$new" || die "$(L "БД '$new' уже существует" "Database '$new' already exists")"
@@ -2169,8 +2198,8 @@ cmd_db_rename() {
 cmd_db_chown() {
   ensure_running
   local db="${1:-}" u="${2:-}"
-  if [[ -z "$db" ]]; then ask db "$(L "Имя БД" "Database name")"; fi
-  if [[ -z "$u" ]]; then ask u "$(L "Новый владелец" "New owner")"; fi
+  if [[ -z "$db" ]]; then ask_name db db "$(L "Имя БД" "Database name")"; fi
+  if [[ -z "$u" ]]; then ask_name u user "$(L "Новый владелец" "New owner")"; fi
   validate_db "$db"; validate_user "$u"
   db_exists "$db" || die "$(L "БД '$db' не существует" "Database '$db' does not exist")"
   if ! role_exists "$u"; then
@@ -2187,7 +2216,7 @@ cmd_db_chown() {
 cmd_user_create() {
   ensure_running
   local u="${1:-}" db="${2:-}" profile="${3:-}" cidr="${4:-}"
-  if [[ -z "$u" ]]; then ask u "$(L "Имя пользователя" "User name")"; fi
+  if [[ -z "$u" ]]; then ask_name u user "$(L "Имя пользователя" "User name")"; fi
   validate_user "$u"
   if [[ -z "$db" && -t 0 ]]; then ask db "$(L "БД для доступа (Enter — без доступа)" "Database to grant access to (Enter = none)")" ""; fi
   if [[ -n "$db" ]]; then
@@ -2208,8 +2237,8 @@ cmd_user_create() {
 cmd_user_role() {
   ensure_running
   local u="${1:-}" db="${2:-}" profile="${3:-}"
-  if [[ -z "$u" ]]; then ask u "$(L "Пользователь" "User")"; fi
-  if [[ -z "$db" ]]; then ask db "$(L "БД" "Database")"; fi
+  if [[ -z "$u" ]]; then ask_name u user "$(L "Пользователь" "User")"; fi
+  if [[ -z "$db" ]]; then ask_name db db "$(L "БД" "Database")"; fi
   if [[ -z "$profile" ]]; then ask profile "$(L "Новый профиль (owner / readwrite / readonly / none)" "New profile (owner / readwrite / readonly / none)")" "readwrite"; fi
   validate_user "$u"; validate_db "$db"
   profile="$(normalize_profile "$profile")"
@@ -2221,7 +2250,7 @@ cmd_user_role() {
 cmd_user_passwd() {
   ensure_running
   local u="${1:-}" esc
-  if [[ -z "$u" ]]; then ask u "$(L "Пользователь" "User")"; fi
+  if [[ -z "$u" ]]; then ask_name u user "$(L "Пользователь" "User")"; fi
   validate_user "$u"
   role_exists "$u" || die "$(L "Пользователь '$u' не существует" "User '$u' does not exist")"
   choose_password "$u"
@@ -2237,7 +2266,7 @@ SQL
 cmd_user_limit() {
   ensure_running
   local u="${1:-}" n="${2:-}"
-  if [[ -z "$u" ]]; then ask u "$(L "Пользователь" "User")"; fi
+  if [[ -z "$u" ]]; then ask_name u user "$(L "Пользователь" "User")"; fi
   if [[ -z "$n" ]]; then ASK_ZERO_OK=1 ask n "$(L "Лимит одновременных подключений (-1 — без лимита)" "Concurrent connection limit (-1 = unlimited)")" "-1"; fi
   validate_user "$u"
   [[ "$n" =~ ^-?[0-9]+$ ]] || die "$(L "Лимит должен быть целым числом" "The limit must be an integer")"
@@ -2249,8 +2278,8 @@ cmd_user_limit() {
 cmd_user_rename() {
   ensure_running
   local old="${1:-}" new="${2:-}" f
-  if [[ -z "$old" ]]; then ask old "$(L "Текущее имя пользователя" "Current user name")"; fi
-  if [[ -z "$new" ]]; then ask new "$(L "Новое имя" "New name")"; fi
+  if [[ -z "$old" ]]; then ask_name old user "$(L "Текущее имя пользователя" "Current user name")"; fi
+  if [[ -z "$new" ]]; then ask_name new user "$(L "Новое имя" "New name")"; fi
   validate_user "$old"; validate_user "$new"
   role_exists "$old" || die "$(L "Пользователь '$old' не существует" "User '$old' does not exist")"
   ! role_exists "$new" || die "$(L "Роль '$new' уже существует" "Role '$new' already exists")"
@@ -2265,7 +2294,7 @@ cmd_user_rename() {
 cmd_user_drop() {
   ensure_running
   local u="${1:-}" d owner owned
-  if [[ -z "$u" ]]; then ask u "$(L "Пользователь для УДАЛЕНИЯ" "User to DROP")"; fi
+  if [[ -z "$u" ]]; then ask_name u user "$(L "Пользователь для УДАЛЕНИЯ" "User to DROP")"; fi
   validate_user "$u"
   role_exists "$u" || die "$(L "Пользователь '$u' не существует" "User '$u' does not exist")"
   owned="$(psql_val "SELECT string_agg(datname, ', ') FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname='$u')")"
@@ -2292,8 +2321,8 @@ SQL
 cmd_access_add() {
   ensure_running
   local db="${1:-}" u="${2:-}" cidr="${3:-}" list
-  if [[ -z "$db" ]]; then ask db "$(L "БД" "Database")"; fi
-  if [[ -z "$u" ]]; then ask u "$(L "Пользователь" "User")"; fi
+  if [[ -z "$db" ]]; then ask_name db db "$(L "БД" "Database")"; fi
+  if [[ -z "$u" ]]; then ask_name u user "$(L "Пользователь" "User")"; fi
   if [[ -z "$cidr" ]]; then ask cidr "$(L "IP/CIDR клиентов через запятую (например 203.0.113.10, 198.51.100.0/24)" "Client IPs/CIDRs, comma-separated (e.g. 203.0.113.10, 198.51.100.0/24)")"; fi
   validate_db "$db"; validate_user "$u"
   db_exists "$db" || die "$(L "БД '$db' не существует" "Database '$db' does not exist")"
