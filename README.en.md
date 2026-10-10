@@ -198,7 +198,7 @@ Step by step, the script will:
 1. show a server analysis (cores, RAM, disk);
 2. install PostgreSQL (if not installed yet);
 3. ask for the **network mode** (`local` / `private` / `public`) and the IPs allowed to connect;
-4. ask for the PostgreSQL **port** (standard 5432, custom, or a random free one) and whether the server is **behind NAT** with port forwarding (external port);
+4. ask for the PostgreSQL **port** (standard 5432, custom, or a random free one) and (only in `public` mode) whether the server is **behind NAT** with port forwarding (external port);
 5. tune PostgreSQL for your hardware and restart the service;
 6. configure swap and backups, and offer to enable the `ufw` firewall;
 7. offer to create the first database and its owner right away and print the connection details (IP, port, database, login, password);
@@ -428,7 +428,7 @@ For all new connections use `psql -p <port> ...` and `host:port` in URLs. `pg_hb
 
 ## NAT, external port and protocol
 
-If the server is behind NAT and the provider forwards a port, **you often cannot choose the external port** (the provider assigns it), but you can read it in the panel. After the port question the script asks: **is the server behind NAT with port forwarding?** If yes, enter the **external port** (as shown in the provider's panel).
+If the server is behind NAT and the provider forwards a port, **you often cannot choose the external port** (the provider assigns it), but you can read it in the panel. In `public` mode, after the port question, the script asks: **is the server behind NAT with port forwarding?** (in `local` and `private` modes the question is skipped: clients run on the server itself or inside the VPN) If yes, enter the **external port** (as shown in the provider's panel).
 
 The external port is used **for display only**: it appears in the "Connection details", in the copy-paste block and in the connection URL (`...@IP:external_port/...`). `ufw` and `pg_hba.conf` work with PostgreSQL's internal port, because NAT forwards the traffic to it.
 

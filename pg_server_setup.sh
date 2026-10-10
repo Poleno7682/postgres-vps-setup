@@ -1193,7 +1193,7 @@ cmd_port() { # cmd_port [port|default|random]
     step_port_finish
     if [[ -x "$BACKUP_BIN" ]]; then step_backup; fi
   fi
-  if [[ -t 0 && "$ASSUME_YES" != 1 ]]; then select_nat 1; fi
+  if [[ -t 0 && "$ASSUME_YES" != 1 && "$(state_get NETWORK_MODE)" == public ]]; then select_nat 1; fi
 }
 
 # Port that clients must use: the external NAT port when set, otherwise the real one.
@@ -1212,9 +1212,19 @@ proto_value() {
 # you, but visible in its panel). Only affects what is shown in the connection
 # details — the firewall and pg_hba use the real port.
 select_nat() { # select_nat [force=0]
-  local force="${1:-0}" ext="${EXTERNAL_PORT:-}" asked cur idx=1 def=1
+  local force="${1:-0}" ext="${EXTERNAL_PORT:-}" asked cur idx=1 def=1 mode
   asked="$(state_get NAT_ASKED)"
   cur="$(state_get EXTERNAL_PORT)"
+  mode="$(state_get NETWORK_MODE)"
+
+  # local / private: clients are on this host or inside a VPN, there is no provider NAT
+  # to describe. No question; a stale external port is cleared so it is not shown.
+  if [[ "$mode" != public && "$force" != 1 && -z "$ext" ]]; then
+    EXTERNAL_PORT=""
+    state_set EXTERNAL_PORT ""
+    skip "$(L "NAT: не требуется в режиме ${mode:-local}" "NAT: not needed in ${mode:-local} mode")"
+    return 0
+  fi
 
   if [[ -z "$ext" && -n "$asked" && "$force" != 1 ]]; then
     EXTERNAL_PORT="$cur"
@@ -1993,6 +2003,7 @@ cmd_network() { # change the network mode (local / private / public) on an insta
   ensure_running
   cmd_analyze
   select_network 1
+  select_nat 0
   step_tuning
   apply_ufw_defaults
   print_network_summary
