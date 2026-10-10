@@ -2795,7 +2795,7 @@ render_status_frame() { # render_status_frame [live]
   if [[ "$live" == live ]]; then
     gap
     printf '  %s %s %s  %s%s%s\n' "$C_INV$C_CYAN" "$(L "Статус сервера" "Server status")" "$C_RESET" "$C_DIM" \
-      "$(L "обновление 2 с · g — вид графиков · др. клавиша — выход" "refresh 2 s · g = graph style · other key = exit")" "$C_RESET"
+      "$(L "обновление 2 с · g — вид графиков · q / 0 / Esc — выход" "refresh 2 s · g = graph style · q / 0 / Esc = exit")" "$C_RESET"
   fi
   gap
   box_top "$(L "Нагрузка сервера" "Server load")" "$C_CYAN"
@@ -2847,9 +2847,43 @@ status_prime() { # first samples so rates have a baseline, then a short warm-up 
   done
 }
 
+# Reads at most one keystroke for the live view. Prints the action to stdout:
+#   quit | graph | ignore | (nothing on timeout)
+# Only q / Q / 0 / Esc quit the view. Everything else is ignored: arrow keys and other escape
+# sequences (mouse wheel, focus events, terminal replies), Enter, pasted text. Previously ANY
+# byte on the terminal input closed the view, so stray input looked like "closes by itself".
+read_live_key() {
+  local k k2 more n=0
+  IFS= read -rsn1 -t 2 k || return 0          # timeout (or EOF): no key
+  if [[ -n "${PGMGR_DEBUG:-}" ]]; then
+    printf '%s key=%s\n' "$(date +%T)" "$(printf '%s' "$k" | od -An -tx1 | tr -d ' \n')" >> "${TMPDIR:-/tmp}/pgmgr-keys.log"
+  fi
+  case "$k" in
+    g|G) echo graph ;;
+    q|Q|0) echo quit ;;
+    $'\e')
+      # A lone Esc quits; Esc followed by more bytes is an escape sequence: swallow it whole.
+      if IFS= read -rsn1 -t 0.05 k2; then
+        if [[ "$k2" == '[' || "$k2" == O ]]; then
+          while (( n < 32 )) && IFS= read -rsn1 -t 0.05 more; do
+            n=$(( n + 1 ))
+            if [[ "$more" == [A-Za-z~] ]]; then break; fi
+          done
+        fi
+        echo ignore
+      else
+        echo quit
+      fi
+      ;;
+    *) echo ignore ;;
+  esac
+}
+
 status_live() {
-  local frame k
+  local frame act
   status_prime
+  # drop anything typed before the view opened (e.g. a second Enter after choosing the item)
+  while IFS= read -rsn1 -t 0.05 _; do :; done
   printf '\033[?25l\033[H\033[2J'
   while true; do
     sample_system
@@ -2861,9 +2895,11 @@ status_live() {
     fi
     frame="${frame//$'\n'/$'\033[K\n'}"                                # erase leftovers of the previous frame
     printf '\033[H%s\033[K\n\033[J' "$frame"
-    if read -rs -n1 -t 2 k; then
-      if [[ "$k" == g || "$k" == G ]]; then spark_toggle; else break; fi
-    fi
+    act="$(read_live_key)"
+    case "$act" in
+      quit)  break ;;
+      graph) spark_toggle ;;
+    esac
   done
   printf '\033[?25h'
 }
