@@ -76,7 +76,7 @@ PASSWORD_GENERATED=0
 RESOLVED_CIDRS=""
 
 # Server analysis results (analyze_hardware)
-HW_CORES=1; HW_MEM_MB=0; HW_AVAIL_MB=0; HW_SWAP_MB=0
+HW_CORES=1; HW_PHYS=1; HW_MEM_MB=0; HW_AVAIL_MB=0; HW_SWAP_MB=0
 HW_DISK_FREE_GB=0; HW_DISK_TOTAL_GB=0; HW_DISK_PATH="/"
 HW_STORAGE_DETECTED="unknown"; HW_VIRT="unknown"
 
@@ -598,22 +598,50 @@ ensure_running() {
 
 # ------------------------------------------------- server resource analysis ----
 
-detect_storage() { # ssd | hdd | unknown (per kernel data; may be inaccurate on a VPS)
-  local src base rota
+# nvme | ssd | hdd | unknown. Walks the device chain (LVM, partitions, md) down to the
+# physical disk(s): /var on LVM over NVMe used to come out as "unknown".
+detect_storage() {
+  local src type rota tran best="" base
   src="$(findmnt -no SOURCE -T "$HW_DISK_PATH" 2>/dev/null || true)"
   if [[ -z "$src" ]]; then echo unknown; return 0; fi
+  while read -r type rota tran; do
+    [[ "$type" == disk ]] || continue
+    if [[ "$tran" == nvme ]]; then best=nvme; break; fi
+    if [[ "$rota" == 0 ]]; then best="${best:-ssd}"; else best="${best:-hdd}"; fi
+  done < <(lsblk -s -nr -o TYPE,ROTA,TRAN "$src" 2>/dev/null)
+  if [[ -n "$best" ]]; then echo "$best"; return 0; fi
+  # fallback: sysfs of the parent device
   base="$(lsblk -no PKNAME "$src" 2>/dev/null | head -n1 || true)"
   base="${base:-$(basename "$src")}"
   if [[ -r "/sys/block/${base}/queue/rotational" ]]; then
-    rota="$(cat "/sys/block/${base}/queue/rotational")"
-    if [[ "$rota" == 0 ]]; then echo ssd; else echo hdd; fi
+    if [[ "$(cat "/sys/block/${base}/queue/rotational")" == 0 ]]; then echo ssd; else echo hdd; fi
   else
     echo unknown
   fi
 }
 
+# Physical cores (nproc counts threads: SMT/Hyper-Threading shows every thread as a CPU).
+detect_phys_cores() {
+  local n
+  n="$(lscpu -p=CORE,SOCKET 2>/dev/null | grep -v '^#' | sort -u | wc -l)"
+  if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then echo "$n"; else nproc; fi
+}
+
+cpu_label() { # "4 cores / 8 threads" or "2 cores"
+  if (( HW_PHYS > 0 && HW_PHYS < HW_CORES )); then
+    L "$HW_PHYS ядра / $HW_CORES потоков" "$HW_PHYS cores / $HW_CORES threads"
+  else
+    L "$HW_CORES ядер" "$HW_CORES cores"
+  fi
+}
+
+storage_label() { # NVMe SSD / SSD / HDD
+  case "$1" in nvme) printf 'NVMe SSD' ;; ssd) printf 'SSD' ;; hdd) printf 'HDD' ;; *) printf '%s' "$1" ;; esac
+}
+
 analyze_hardware() {
   HW_CORES="$(nproc)"
+  HW_PHYS="$(detect_phys_cores)"
   HW_MEM_MB=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 1024 ))
   HW_AVAIL_MB=$(( $(awk '/^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{print (a != "") ? a : f + b + c}' /proc/meminfo) / 1024 ))
   HW_SWAP_MB=$(( $(awk '/^SwapTotal:/{t=$2} END{print t + 0}' /proc/meminfo) / 1024 ))
@@ -626,7 +654,7 @@ analyze_hardware() {
   HW_VIRT="${HW_VIRT:-unknown}"
   if [[ -z "$STORAGE" ]]; then
     # On a VPS virtio disks are often falsely flagged as HDD — treat as HDD on bare metal only.
-    if [[ "$HW_STORAGE_DETECTED" == hdd && "$HW_VIRT" == none ]]; then STORAGE=hdd; else STORAGE=ssd; fi
+    if [[ "$HW_STORAGE_DETECTED" == hdd && "$HW_VIRT" == none ]]; then STORAGE=hdd; else STORAGE=ssd; fi  # nvme/ssd/unknown -> ssd tuning
   fi
 }
 
@@ -652,11 +680,11 @@ print_hw_report() {
   local used=$(( HW_MEM_MB - HW_AVAIL_MB ))
   echo
   box_top "$(L "Анализ сервера" "Server analysis")" "$C_CYAN"
-  box_kv "CPU" "$(L "$HW_CORES ядер" "$HW_CORES cores")"
+  box_kv "CPU" "$(cpu_label)"
   box_kv "RAM" "$(L "$(gb "$HW_MEM_MB") ГБ всего · $(gb "$HW_AVAIL_MB") ГБ свободно · занято $(gb "$used") ГБ" "$(gb "$HW_MEM_MB") GB total · $(gb "$HW_AVAIL_MB") GB free · used $(gb "$used") GB")"
   box_kv "Swap" "$(L "$(gb "$HW_SWAP_MB") ГБ" "$(gb "$HW_SWAP_MB") GB")"
   box_kv "$(L "Диск" "Disk")" "$(L "$HW_DISK_FREE_GB ГБ свободно из $HW_DISK_TOTAL_GB ГБ ($HW_DISK_PATH)" "$HW_DISK_FREE_GB GB free of $HW_DISK_TOTAL_GB GB ($HW_DISK_PATH)")"
-  box_kv "$(L "Тип диска" "Disk type")" "$(L "$STORAGE (ядро: $HW_STORAGE_DETECTED; виртуализация: $HW_VIRT)" "$STORAGE (kernel: $HW_STORAGE_DETECTED; virtualization: $HW_VIRT)")"
+  box_kv "$(L "Тип диска" "Disk type")" "$(storage_label "$HW_STORAGE_DETECTED") $(L "(профиль настроек" "(tuning profile"): $(storage_label "$STORAGE"); $(L "виртуализация" "virtualization"): $HW_VIRT)"
   box_bottom
   if (( HW_CORES < 2 )); then warn "$(L "1 ядро: параллельные запросы и автовакуум будут ограничены" "1 core: parallel queries and autovacuum will be limited")"; fi
   if (( HW_MEM_MB < 2000 )); then warn "$(L "RAM меньше 2 ГБ: PostgreSQL будет работать, но на пределе" "Less than 2 GB RAM: PostgreSQL will run, but at its limit")"; fi
@@ -1541,7 +1569,7 @@ render_tuning() {
 
   cat <<EOF
 # Managed by pg_server_setup.sh — do not edit by hand (overwritten on setup).
-# CPU: ${HW_CORES} cores, RAM: ${HW_MEM_MB} MB (budget ${budget} MB, role: ${SERVER_ROLE}), disk: ${STORAGE}
+# CPU: ${HW_PHYS} cores / ${HW_CORES} threads, RAM: ${HW_MEM_MB} MB (budget ${budget} MB, role: ${SERVER_ROLE}), disk: ${STORAGE}
 # Network: ${NETWORK_MODE}
 listen_addresses = '${LISTEN_ADDR}'
 max_connections = ${maxc}
@@ -2552,7 +2580,7 @@ render_status_frame() { # render_status_frame [live]
   fi
   gap
   box_top "$(L "Нагрузка сервера" "Server load")" "$C_CYAN"
-  dash_row "CPU" "$M_CPU" "$(L "$HW_CORES ядер" "$HW_CORES cores")" H_CPU 100
+  dash_row "CPU" "$M_CPU" "$(cpu_label)" H_CPU 100
   dash_row "$(L "Нагрузка" "Load avg")" "$M_LOADPCT" "$M_LOAD1 $M_LOAD5 $M_LOAD15" H_LOAD 100
   dash_row "RAM" "$M_RAM_PCT" "$(gb "$M_RAM_USED_MB") / $(gb "$M_RAM_TOTAL_MB") GB" H_RAM 100
   dash_row "Swap" "$M_SWAP_PCT" "$(gb "$M_SWAP_USED_MB") / $(gb "$M_SWAP_TOTAL_MB") GB"
