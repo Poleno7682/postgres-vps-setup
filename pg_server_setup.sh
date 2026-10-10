@@ -76,6 +76,9 @@ PASSWORD_GENERATED=0
 RESOLVED_CIDRS=""
 
 # Server analysis results (analyze_hardware)
+# Cores/threads/RAM *available to this OS*: hardware minus what running VMs hold (see detect_vm_reservation)
+HW_LOGICAL_ALL=1; HW_PHYS_ALL=1; HW_TAKEN_N=0; HW_TAKEN_LIST=""; HW_TAKEN_SET=""
+HW_MEM_TOTAL_MB=0; HW_VM_MB=0
 HW_CORES=1; HW_PHYS=1; HW_MEM_MB=0; HW_AVAIL_MB=0; HW_SWAP_MB=0
 HW_DISK_FREE_GB=0; HW_DISK_TOTAL_GB=0; HW_DISK_PATH="/"
 HW_STORAGE_DETECTED="unknown"; HW_VIRT="unknown"
@@ -620,6 +623,72 @@ detect_storage() {
   fi
 }
 
+# Cores and memory taken away from this OS by virtual machines — same method as the
+# login banner (/etc/update-motd.d/93-server-cpu-ram):
+#   cores  = isolated by the kernel (isolcpus) + pinned (vcpupin) to running libvirt VMs;
+#   memory = max(memory of running VMs per `virsh dominfo`, the HugePages pool, which the
+#            kernel reserves in advance).
+# Read-only; every virsh call is under a timeout. PGMGR_ISOLATED / PGMGR_MEMINFO override
+# the sources (for testing).
+detect_vm_reservation() {
+  local iso_file="${PGMGR_ISOLATED:-/sys/devices/system/cpu/isolated}"
+  local meminfo="${PGMGR_MEMINFO:-/proc/meminfo}"
+  local topo logical physical taken_list vm pins p vm_kib hp
+  topo="$(lscpu -p=CPU,CORE 2>/dev/null | grep -v '^#' || true)"
+  logical="$(printf '%s\n' "$topo" | grep -c . || true)"
+  physical="$(printf '%s\n' "$topo" | cut -d, -f2 | sort -u | grep -c . || true)"
+  if (( logical < 1 )); then
+    logical="$(nproc --all 2>/dev/null || nproc)"
+    physical="$logical"
+    topo=""
+  fi
+
+  taken_list="$(cat "$iso_file" 2>/dev/null || true)"
+  if command -v virsh >/dev/null 2>&1; then
+    for vm in $(timeout 3 virsh list --state-running --name 2>/dev/null || true); do
+      pins="$(timeout 3 virsh dumpxml "$vm" 2>/dev/null | grep -o "<vcpupin [^>]*>" | sed -n "s/.*cpuset='\([^']*\)'.*/\1/p" || true)"
+      for p in $pins; do taken_list="${taken_list:+$taken_list,}$p"; done
+    done
+  fi
+
+  # expand "2-3,6-7" into unique CPU numbers
+  HW_TAKEN_SET="$(printf '%s\n' "$taken_list" | awk -F, '{
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^[0-9]+-[0-9]+$/) { split($i, r, "-"); for (c = r[1]; c <= r[2]; c++) s[c] = 1 }
+        else if ($i ~ /^[0-9]+$/) s[$i] = 1
+      }
+    } END { for (c in s) print c }' | sort -n | tr '\n' ' ')"
+  HW_TAKEN_SET="${HW_TAKEN_SET% }"
+  HW_TAKEN_N="$(printf '%s\n' "$HW_TAKEN_SET" | wc -w)"
+  HW_TAKEN_LIST="$(printf '%s\n' $HW_TAKEN_SET | awk 'NR == 1 {s = $1; p = $1; next} $1 == p + 1 {p = $1; next} {o = o (o ? "," : "") (s == p ? s : s "-" p); s = $1; p = $1} END {if (NR) o = o (o ? "," : "") (s == p ? s : s "-" p); print o}')"
+
+  HW_LOGICAL_ALL="$logical"
+  HW_PHYS_ALL="$physical"
+  HW_CORES=$(( logical - HW_TAKEN_N ))
+  if (( HW_CORES < 1 )); then HW_CORES=1; fi
+  if [[ -n "$topo" ]]; then
+    HW_PHYS="$(printf '%s\n' "$topo" | awk -F, -v t="$HW_TAKEN_SET" '
+      BEGIN { n = split(t, a, " "); for (i = 1; i <= n; i++) bad[a[i]] = 1 }
+      !($1 in bad) { c[$2] = 1 } END { n = 0; for (k in c) n++; print n }')"
+  else
+    HW_PHYS="$HW_CORES"
+  fi
+  if (( HW_PHYS < 1 )); then HW_PHYS=1; fi
+
+  # memory held by VMs
+  vm_kib=0
+  if command -v virsh >/dev/null 2>&1; then
+    vm_kib="$(for vm in $(timeout 3 virsh list --state-running --name 2>/dev/null || true); do
+        timeout 3 virsh dominfo "$vm" 2>/dev/null | sed -n 's/^Used memory:[[:space:]]*\([0-9]*\).*/\1/p'
+      done | awk '{s += $1} END {print s + 0}')"
+  fi
+  hp="$(awk '/^HugePages_Total:/{t = $2} /^Hugepagesize:/{z = $2} END {print t * z + 0}' "$meminfo")"
+  HW_MEM_TOTAL_MB=$(( $(awk '/^MemTotal:/{print $2}' "$meminfo") / 1024 ))
+  HW_VM_MB=$(( (vm_kib > hp ? vm_kib : hp) / 1024 ))
+  HW_MEM_MB=$(( HW_MEM_TOTAL_MB - HW_VM_MB ))
+  if (( HW_MEM_MB < 256 )); then HW_MEM_MB=256; fi
+}
+
 # Physical cores (nproc counts threads: SMT/Hyper-Threading shows every thread as a CPU).
 detect_phys_cores() {
   local n
@@ -627,11 +696,34 @@ detect_phys_cores() {
   if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then echo "$n"; else nproc; fi
 }
 
-cpu_label() { # "4 cores / 8 threads" or "2 cores"
-  if (( HW_PHYS > 0 && HW_PHYS < HW_CORES )); then
-    L "$HW_PHYS ядра / $HW_CORES потоков" "$HW_PHYS cores / $HW_CORES threads"
+ru_plural() { # ru_plural N one few many  ->  "1 ядро" / "3 ядра" / "5 ядер"
+  local n="$1" m10 m100
+  m10=$(( n % 10 )); m100=$(( n % 100 ))
+  if (( m10 == 1 && m100 != 11 )); then printf '%s %s' "$n" "$2"
+  elif (( m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) )); then printf '%s %s' "$n" "$3"
+  else printf '%s %s' "$n" "$4"; fi
+}
+
+ncores()   { if [[ "${LANG_UI:-}" == en ]]; then printf '%s %s' "$1" "$( (( $1 == 1 )) && echo core || echo cores)"; else ru_plural "$1" ядро ядра ядер; fi; }
+nthreads() { if [[ "${LANG_UI:-}" == en ]]; then printf '%s %s' "$1" "$( (( $1 == 1 )) && echo thread || echo threads)"; else ru_plural "$1" поток потока потоков; fi; }
+
+cpu_label() { # "4 cores / 8 threads"; with VMs: "2 cores / 4 threads available (of 4 / 8)"
+  if (( HW_TAKEN_N > 0 )); then
+    L "$(ncores "$HW_PHYS") / $(nthreads "$HW_CORES") доступно (из $HW_PHYS_ALL / $HW_LOGICAL_ALL)" "$(ncores "$HW_PHYS") / $(nthreads "$HW_CORES") available (of $HW_PHYS_ALL / $HW_LOGICAL_ALL)"
+  elif (( HW_PHYS > 0 && HW_PHYS < HW_CORES )); then
+    printf '%s / %s' "$(ncores "$HW_PHYS")" "$(nthreads "$HW_CORES")"
   else
-    L "$HW_CORES ядер" "$HW_CORES cores"
+    ncores "$HW_CORES"
+  fi
+}
+
+cpu_short() { # short form for the 18-character dashboard column
+  if (( HW_TAKEN_N > 0 )); then
+    L "$HW_CORES/$HW_LOGICAL_ALL потоков" "$HW_CORES/$HW_LOGICAL_ALL threads"
+  elif (( HW_PHYS > 0 && HW_PHYS < HW_CORES )); then
+    L "$HW_PHYS яд./$HW_CORES пот." "$HW_PHYS c/$HW_CORES t"
+  else
+    ncores "$HW_CORES"
   fi
 }
 
@@ -640,10 +732,9 @@ storage_label() { # NVMe SSD / SSD / HDD
 }
 
 analyze_hardware() {
-  HW_CORES="$(nproc)"
-  HW_PHYS="$(detect_phys_cores)"
-  HW_MEM_MB=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo) / 1024 ))
-  HW_AVAIL_MB=$(( $(awk '/^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{print (a != "") ? a : f + b + c}' /proc/meminfo) / 1024 ))
+  detect_vm_reservation       # HW_CORES / HW_PHYS / HW_MEM_MB = what is left for this OS
+  HW_AVAIL_MB=$(( $(awk '/^MemAvailable:/{a=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} END{print (a != "") ? a : f + b + c}' "${PGMGR_MEMINFO:-/proc/meminfo}") / 1024 ))
+  if (( HW_AVAIL_MB > HW_MEM_MB )); then HW_AVAIL_MB="$HW_MEM_MB"; fi
   HW_SWAP_MB=$(( $(awk '/^SwapTotal:/{t=$2} END{print t + 0}' /proc/meminfo) / 1024 ))
   HW_DISK_PATH="/var/lib/postgresql"
   if [[ ! -d "$HW_DISK_PATH" ]]; then HW_DISK_PATH="/var"; fi
@@ -678,13 +769,29 @@ resolve_server_role() { # dedicated | shared
 
 print_hw_report() {
   local used=$(( HW_MEM_MB - HW_AVAIL_MB ))
+  if (( used < 0 )); then used=0; fi
   echo
   box_top "$(L "Анализ сервера" "Server analysis")" "$C_CYAN"
-  box_kv "CPU" "$(cpu_label)"
-  box_kv "RAM" "$(L "$(gb "$HW_MEM_MB") ГБ всего · $(gb "$HW_AVAIL_MB") ГБ свободно · занято $(gb "$used") ГБ" "$(gb "$HW_MEM_MB") GB total · $(gb "$HW_AVAIL_MB") GB free · used $(gb "$used") GB")"
+  if (( HW_TAKEN_N > 0 )); then
+    box_kv "CPU" "$(ncores "$HW_PHYS_ALL") / $(nthreads "$HW_LOGICAL_ALL") $(L "всего" "in total")"
+    box_kv "$(L "Доступно ОС" "Available to OS")" "$(ncores "$HW_PHYS") / $(nthreads "$HW_CORES") · $(L "занято VM: потоки" "taken by VMs: threads") ${HW_TAKEN_LIST}" "$C_YELLOW$C_BOLD"
+  else
+    box_kv "CPU" "$(cpu_label)"
+  fi
+  if (( HW_VM_MB > 0 )); then
+    box_kv "RAM" "$(L "$(gb "$HW_MEM_TOTAL_MB") ГБ всего · VM: $(gb "$HW_VM_MB") ГБ" "$(gb "$HW_MEM_TOTAL_MB") GB total · VMs: $(gb "$HW_VM_MB") GB")"
+    box_kv "$(L "Доступно ОС" "Available to OS")" "$(L "$(gb "$HW_MEM_MB") ГБ · свободно $(gb "$HW_AVAIL_MB") ГБ · занято $(gb "$used") ГБ" "$(gb "$HW_MEM_MB") GB · free $(gb "$HW_AVAIL_MB") GB · used $(gb "$used") GB")" "$C_YELLOW$C_BOLD"
+  else
+    box_kv "RAM" "$(L "$(gb "$HW_MEM_MB") ГБ всего · $(gb "$HW_AVAIL_MB") ГБ свободно · занято $(gb "$used") ГБ" "$(gb "$HW_MEM_MB") GB total · $(gb "$HW_AVAIL_MB") GB free · used $(gb "$used") GB")"
+  fi
   box_kv "Swap" "$(L "$(gb "$HW_SWAP_MB") ГБ" "$(gb "$HW_SWAP_MB") GB")"
   box_kv "$(L "Диск" "Disk")" "$(L "$HW_DISK_FREE_GB ГБ свободно из $HW_DISK_TOTAL_GB ГБ ($HW_DISK_PATH)" "$HW_DISK_FREE_GB GB free of $HW_DISK_TOTAL_GB GB ($HW_DISK_PATH)")"
   box_kv "$(L "Тип диска" "Disk type")" "$(storage_label "$HW_STORAGE_DETECTED") $(L "(профиль настроек" "(tuning profile"): $(storage_label "$STORAGE"); $(L "виртуализация" "virtualization"): $HW_VIRT)"
+  if (( HW_TAKEN_N > 0 || HW_VM_MB > 0 )); then
+    box_row "" ""
+    box_row "$(L "Настройки PostgreSQL считаются по ресурсам, доступным ОС." "PostgreSQL settings are calculated from the resources available to the OS.")" "$C_DIM"
+    box_row "$(L "Изменились ВМ? Меню: «Пересчитать настройки под ресурсы»." "VMs changed? Menu: \"Recalculate settings for resources\".")" "$C_DIM"
+  fi
   box_bottom
   if (( HW_CORES < 2 )); then warn "$(L "1 ядро: параллельные запросы и автовакуум будут ограничены" "1 core: parallel queries and autovacuum will be limited")"; fi
   if (( HW_MEM_MB < 2000 )); then warn "$(L "RAM меньше 2 ГБ: PostgreSQL будет работать, но на пределе" "Less than 2 GB RAM: PostgreSQL will run, but at its limit")"; fi
@@ -1626,6 +1733,8 @@ step_tuning() {
     need_restart=1
   fi
   rm -f "$tmp"
+  state_set TUNED_CORES "$HW_CORES"
+  state_set TUNED_MEM_MB "$HW_MEM_MB"
 
   if [[ "$need_restart" == 0 && "$(psql_val 'SELECT count(*) FROM pg_settings WHERE pending_restart' 2>/dev/null || echo 0)" != 0 ]]; then
     info "$(L "Есть параметры, ожидающие перезапуска (прерванная настройка) — перезапускаю" "Some settings are waiting for a restart (interrupted setup) — restarting")"
@@ -1887,6 +1996,72 @@ cmd_network() { # change the network mode (local / private / public) on an insta
   step_tuning
   apply_ufw_defaults
   print_network_summary
+}
+
+# ---- Recalculate PostgreSQL settings for the resources available NOW ----------------
+
+TUNE_KEYS=(max_connections shared_buffers effective_cache_size work_mem maintenance_work_mem
+           max_worker_processes max_parallel_workers max_parallel_workers_per_gather
+           max_parallel_maintenance_workers autovacuum_max_workers)
+
+conf_value() { # conf_value file key
+  sed -n "s/^${2} = //p" "$1" 2>/dev/null | head -n1
+}
+
+# Message when the resources available to the OS differ from those the settings were
+# tuned for (typically: a VM was started or stopped). Empty when nothing changed.
+resources_drift() {
+  local tc tm
+  tc="$(state_get TUNED_CORES)"; tm="$(state_get TUNED_MEM_MB)"
+  [[ -n "$tc" && -n "$tm" ]] || return 0
+  detect_vm_reservation
+  local dm=$(( HW_MEM_MB > tm ? HW_MEM_MB - tm : tm - HW_MEM_MB ))
+  if [[ "$HW_CORES" != "$tc" ]] || (( dm >= 256 )); then
+    L "Настройки считались для $tc потоков / $(gb "$tm") ГБ, сейчас доступно $HW_CORES потоков / $(gb "$HW_MEM_MB") ГБ" \
+      "Settings were tuned for $tc threads / $(gb "$tm") GB, now available: $HW_CORES threads / $(gb "$HW_MEM_MB") GB"
+  fi
+}
+
+cmd_retune() {
+  ensure_running
+  local conf new key old nw changed=0 tc tm
+  conf="/etc/postgresql/${PG_VER}/${PG_CLUSTER}/conf.d/${CONF_NAME}"
+  tc="$(state_get TUNED_CORES)"; tm="$(state_get TUNED_MEM_MB)"
+  cmd_analyze
+  select_network 0
+  new="$(mktemp)"
+  render_tuning > "$new"
+
+  echo
+  box_top "$(L "Пересчёт настроек PostgreSQL" "PostgreSQL settings recalculation")" "$C_MAGENTA"
+  if [[ -n "$tc" && -n "$tm" ]]; then
+    box_kv "$(L "Было" "Before")" "$(L "$tc потоков / $(gb "$tm") ГБ" "$tc threads / $(gb "$tm") GB")"
+  fi
+  box_kv "$(L "Сейчас доступно" "Available now")" "$(L "$HW_CORES потоков / $(gb "$HW_MEM_MB") ГБ" "$HW_CORES threads / $(gb "$HW_MEM_MB") GB")" "$C_BOLD"
+  box_row "" ""
+  for key in "${TUNE_KEYS[@]}"; do
+    old="$(conf_value "$conf" "$key")"
+    nw="$(conf_value "$new" "$key")"
+    if [[ "${old:-—}" == "$nw" ]]; then
+      box_kv "$key" "$nw" "$C_DIM"
+    else
+      changed=1
+      box_kv "$key" "${old:-—}  →  $nw" "$C_YELLOW$C_BOLD"
+    fi
+  done
+  box_bottom
+  rm -f "$new"
+
+  if [[ "$changed" == 0 ]]; then
+    log "$(L "Настройки уже соответствуют доступным ресурсам — менять нечего." "The settings already match the available resources — nothing to change.")"
+    state_set TUNED_CORES "$HW_CORES"
+    state_set TUNED_MEM_MB "$HW_MEM_MB"
+    return 0
+  fi
+  warn "$(L "PostgreSQL будет перезапущен, активные подключения оборвутся." "PostgreSQL will be restarted, active connections will be dropped.")"
+  confirm "$(L "Применить новые настройки?" "Apply the new settings?")" || { log "$(L "Отменено" "Cancelled")"; return 0; }
+  step_tuning
+  log "$(L "Настройки пересчитаны под доступные ресурсы." "Settings recalculated for the available resources.")"
 }
 
 # ---------------------------------------------------------- database commands ----
@@ -2476,21 +2651,25 @@ fmt_rate() { # KB/s -> "12 KB/s" or "1.4 MB/s"
 # ---- samplers -------------------------------------------------------------------
 
 sample_system() {
-  local u n s i io irq sirq st t dt di l1 l5 l15 mt ma st_t st_f now rx tx dtu iface
-  # CPU
-  read -r _ u n s i io irq sirq st _ < /proc/stat
-  t=$(( u + n + s + i + io + irq + sirq + st ))
-  dt=$(( t - CPU_PREV_T )); di=$(( i + io - CPU_PREV_I ))
+  local t i dt di l1 l5 l15 mt ma st_t st_f now rx tx dtu iface
+  # CPU: only the threads available to this OS (VM-pinned/isolated ones are left out)
+  read -r t i < <(awk -v tk="$HW_TAKEN_SET" 'BEGIN { n = split(tk, a, " "); for (k = 1; k <= n; k++) bad[a[k]] = 1 }
+    /^cpu[0-9]+ / { id = substr($1, 4); if (id in bad) next; tot = 0; for (f = 2; f <= 9; f++) tot += $f; total += tot; idle += $5 + $6 }
+    END { print total + 0, idle + 0 }' /proc/stat)
+  dt=$(( t - CPU_PREV_T )); di=$(( i - CPU_PREV_I ))
   if (( dt > 0 && CPU_PREV_T > 0 )); then M_CPU=$(( (dt - di) * 100 / dt )); fi
-  CPU_PREV_T=$t; CPU_PREV_I=$(( i + io ))
+  CPU_PREV_T=$t; CPU_PREV_I=$i
   # load average (relative to cores)
   read -r l1 l5 l15 _ < /proc/loadavg
   M_LOAD1="$l1"; M_LOAD5="$l5"; M_LOAD15="$l15"
   M_LOADPCT=$(( (10#${l1%.*} * 100 + 10#${l1#*.}) / (HW_CORES > 0 ? HW_CORES : 1) ))
   # memory and swap
   read -r mt ma st_t st_f < <(awk '/^MemTotal:/{a=$2} /^MemAvailable:/{b=$2} /^SwapTotal:/{c=$2} /^SwapFree:/{d=$2} END{print a, b, c, d}' /proc/meminfo)
-  M_RAM_TOTAL_MB=$(( mt / 1024 )); M_RAM_USED_MB=$(( (mt - ma) / 1024 ))
-  M_RAM_PCT=$(( mt > 0 ? (mt - ma) * 100 / mt : 0 ))
+  # memory of this OS = total minus what VMs hold (the same way the login banner shows it)
+  M_RAM_TOTAL_MB=$(( mt / 1024 - HW_VM_MB )); M_RAM_USED_MB=$(( (mt - ma) / 1024 - HW_VM_MB ))
+  if (( M_RAM_TOTAL_MB < 1 )); then M_RAM_TOTAL_MB=1; fi
+  if (( M_RAM_USED_MB < 0 )); then M_RAM_USED_MB=0; fi
+  M_RAM_PCT=$(( M_RAM_USED_MB * 100 / M_RAM_TOTAL_MB ))
   M_SWAP_TOTAL_MB=$(( st_t / 1024 )); M_SWAP_USED_MB=$(( (st_t - st_f) / 1024 ))
   M_SWAP_PCT=$(( st_t > 0 ? (st_t - st_f) * 100 / st_t : 0 ))
   # disk of the data directory
@@ -2580,7 +2759,7 @@ render_status_frame() { # render_status_frame [live]
   fi
   gap
   box_top "$(L "Нагрузка сервера" "Server load")" "$C_CYAN"
-  dash_row "CPU" "$M_CPU" "$(cpu_label)" H_CPU 100
+  dash_row "CPU" "$M_CPU" "$(cpu_short)" H_CPU 100
   dash_row "$(L "Нагрузка" "Load avg")" "$M_LOADPCT" "$M_LOAD1 $M_LOAD5 $M_LOAD15" H_LOAD 100
   dash_row "RAM" "$M_RAM_PCT" "$(gb "$M_RAM_USED_MB") / $(gb "$M_RAM_TOTAL_MB") GB" H_RAM 100
   dash_row "Swap" "$M_SWAP_PCT" "$(gb "$M_SWAP_USED_MB") / $(gb "$M_SWAP_TOTAL_MB") GB"
@@ -2679,7 +2858,8 @@ Usage: $(basename "$SELF") [-y] <command> [arguments]
 
   setup       [--recheck]                analyse the server, install, network mode, tuning (idempotent);
                                          on an already configured server it opens the menu (--recheck forces a full check)
-  analyze                                cores / RAM / disk report
+  analyze                                cores / RAM / disk report (minus what running VMs hold)
+  retune                                 recalculate PostgreSQL settings for the cores/RAM available now
   network                                change network mode: local | private | public (list/all)
   port        [N|default|random]         change the port: 5432, custom or random free
   nat         [external_port|none]       server behind NAT: external port shown to clients
@@ -2714,7 +2894,8 @@ EOF
 
   setup       [--recheck]                анализ сервера, установка, режим сети, тюнинг (идемпотентно);
                                          на уже настроенном сервере открывает меню (--recheck — полная проверка)
-  analyze                                анализ ядер / RAM / диска
+  analyze                                анализ ядер / RAM / диска (за вычетом занятого VM)
+  retune                                 пересчитать настройки PostgreSQL под доступные сейчас ядра/RAM
   network                                сменить режим сети: local | private | public (list/all)
   port        [N|default|random]         сменить порт: 5432, свой или случайный свободный
   nat         [внешний_порт|none]        сервер за NAT: внешний порт для клиентов
@@ -2754,6 +2935,7 @@ MENU_DEF=(
   "setup|Первичная настройка / проверка|Initial setup / re-check"
   "status|Статус сервера|Server status"
   "analyze|Анализ сервера (ядра, RAM, диск)|Server analysis (cores, RAM, disk)"
+  "retune|Пересчитать настройки под доступные ресурсы (учёт VM)|Recalculate settings for available resources (VM-aware)"
   "network|Режим сети (local / private / public)|Network mode (local / private / public)"
   "port|Порт PostgreSQL|PostgreSQL port"
   "nat|Внешний порт и NAT|External port and NAT"
@@ -2768,7 +2950,7 @@ MENU_DEF=(
 )
 
 menu_status_box() {
-  local state color="$C_CYAN" dbs="" cport port_txt
+  local state color="$C_CYAN" dbs="" cport port_txt drift
   detect_cluster
   if [[ -z "$PG_VER" ]]; then
     state="$(L "не установлен" "not installed")"; color="$C_RED"
@@ -2788,6 +2970,15 @@ menu_status_box() {
     box_kv "$(L "Базы данных" "Databases")" "${dbs:-0}"
   fi
   box_kv "$(L "Язык" "Language")" "$LANG_UI"
+  if [[ -n "$PG_VER" ]]; then
+    detect_vm_reservation
+    box_kv "$(L "Ресурсы ОС" "OS resources")" "$(L "$HW_CORES потоков / $(gb "$HW_MEM_MB") ГБ" "$HW_CORES threads / $(gb "$HW_MEM_MB") GB")$( (( HW_TAKEN_N > 0 || HW_VM_MB > 0 )) && L " (VM занимают часть)" " (VMs hold part)")"
+    drift="$(resources_drift)"
+    if [[ -n "$drift" ]]; then
+      box_row "$drift" "$C_YELLOW"
+      box_row "$(L "Рекомендуется пересчитать настройки (пункт меню «Пересчитать настройки»)." "Recalculating the settings is recommended (menu: \"Recalculate settings\").")" "$C_YELLOW"
+    fi
+  fi
   box_bottom
 }
 
@@ -3180,6 +3371,7 @@ cmd_title() { # screen title for a command
     status)        L "Статус сервера" "Server status" ;;
     list)          L "БД, пользователи, профили" "Databases, users, profiles" ;;
     analyze)       L "Анализ сервера" "Server analysis" ;;
+    retune)        L "Пересчёт настроек под ресурсы" "Recalculate settings for resources" ;;
     network)       L "Режим сети" "Network mode" ;;
     port)          L "Порт PostgreSQL" "PostgreSQL port" ;;
     nat)           L "Внешний порт и NAT" "External port and NAT" ;;
@@ -3228,6 +3420,7 @@ main() {
     menu)          menu ;;
     setup)         cmd_setup "$@" ;;
     analyze)       cmd_analyze "$@" ;;
+    retune)        cmd_retune "$@" ;;
     network)       cmd_network "$@" ;;
     port)          cmd_port "$@" ;;
     nat)           cmd_nat "$@" ;;

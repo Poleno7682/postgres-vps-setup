@@ -15,8 +15,8 @@
 <text x="160.8" y="118.7" fill="#a6e3a1" font-weight="bold" textLength="33.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">████</text>
 <text x="194.4" y="118.7" fill="#cdd6f4" opacity="0.6" textLength="100.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">░░░░░░░░░░░░</text>
 <text x="295.2" y="118.7" fill="#cdd6f4" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  30%  </text>
-<text x="354.0" y="118.7" fill="#cdd6f4" opacity="0.6" textLength="159.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 cores / 2 threads</text>
-<text x="522.0" y="118.7" fill="#89dceb" font-weight="bold" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▁▂▂▃▄▅▄▃▂▃▄▄▃▃</text>
+<text x="354.0" y="118.7" fill="#cdd6f4" opacity="0.6" textLength="151.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 c/2 t           </text>
+<text x="513.6" y="118.7" fill="#89dceb" font-weight="bold" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▁▂▂▃▄▅▄▃▂▃▄▄▃▃</text>
 <text x="664.8" y="118.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="137.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="43.2" y="137.7" fill="#cdd6f4" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> Load avg     </text>

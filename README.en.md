@@ -43,6 +43,7 @@ The script is **idempotent**: running it again checks what is already installed 
 - [Terminal interface and screenshots](#terminal-interface)
 - [What `setup` does](#what-setup-does)
 - [Network modes](#network-modes)
+- [Virtual machines and available resources](#virtual-machines-and-available-resources)
 - [IP whitelist](#ip-whitelist)
 - [PostgreSQL port](#postgresql-port) and [NAT](#nat-external-port-and-protocol)
 - [Isolation model and roles](#isolation-model-and-roles)
@@ -371,6 +372,26 @@ sudo ./pg_server_setup.sh whitelist del 203.0.113.10
 - `0.0.0.0/0` (everyone) cannot be put on the whitelist: it is set by the `public` + `all` network mode (`network`).
 - In `local` mode remote access is off: the address is saved and starts working after you change the mode.
 
+## Virtual machines and available resources
+
+If virtual machines (KVM/libvirt) run on the server, part of the cores and memory belongs to them, and PostgreSQL must not assume it owns the whole machine. The script detects this the same way as the server's login banner (`/etc/update-motd.d/93-server-cpu-ram`):
+
+- **Cores (threads)**: unavailable to the OS are those isolated by the kernel (`isolcpus`) and pinned (`vcpupin`) to running VMs (`virsh dumpxml`).
+- **Memory**: the larger of the memory of running VMs (`virsh dominfo`) and the HugePages pool, which the kernel reserves in advance.
+- PostgreSQL settings (`shared_buffers`, `max_connections`, parallel workers and so on) are calculated from what is **left**, and the server analysis and the status dashboard show "available to the OS out of the total" (CPU load is calculated over the OS threads only).
+- Detection is read-only and every `virsh` call runs under a timeout. If `virsh` is not installed, there are considered to be no VMs.
+
+**What to do when VMs are started or stopped.** PostgreSQL settings are written once, so after VM changes they must be recalculated:
+
+```bash
+sudo ./pg_server_setup.sh retune
+```
+
+The menu item "Recalculate settings for available resources (VM-aware)" does the same. The script shows what will change (old value → new for `shared_buffers`, `max_connections`, `work_mem` and the rest), asks for confirmation and restarts PostgreSQL once. When the resources available to the OS differ from those PostgreSQL was tuned for, the main menu shows a yellow warning recommending a recalculation.
+
+> [!TIP]
+> For predictable behaviour pin the VMs' cores (`vcpupin`) or isolate them (`isolcpus`), and reserve their memory through HugePages: then the resources available to the OS are determined exactly. Without pinning, VM threads "float" across all cores, and the script sees the memory but not the cores.
+
 ## PostgreSQL port
 
 After the network is selected, the script asks which port to use:
@@ -460,7 +481,8 @@ Arguments you do not pass are requested interactively. The `-y` flag disables co
 | Command | Description |
 |---|---|
 | `setup [--recheck]` | Analysis, install, network mode, tuning, swap, backups (idempotent). Opens the menu when finished; on an **already configured** server it opens the menu right away, and `--recheck` forces the full check |
-| `analyze` | Report on cores, RAM, disk |
+| `analyze` | Report on cores, RAM, disk (minus what virtual machines hold) |
+| `retune` | Recalculate PostgreSQL settings for the cores and memory available to the OS now (VM-aware) |
 | `network` | Change the network mode (`local` / `private` / `public`) |
 | `port [N\|default\|random]` | Change the PostgreSQL port: 5432, custom, or random free |
 | `nat [external_port\|none]` | Server behind NAT: set the external port shown to clients |
@@ -774,6 +796,13 @@ Yes, that is the main purpose of the script. Every project gets its own database
 <summary><b>How do I allow connections from a new IP (for example, my address changed)?</b></summary>
 
 In the menu choose "IP whitelist" → "Add an IP / network", or run `sudo ./pg_server_setup.sh whitelist add NEW_IP`. The address immediately appears in `pg_hba.conf` for all databases and users and is opened in `ufw`. Remove the old address with "Remove an IP / network".
+
+</details>
+
+<details>
+<summary><b>Virtual machines will run on the server: how does PostgreSQL account for the smaller resources?</b></summary>
+
+The script detects the cores pinned to running VMs and the memory of VMs (the same way as the login banner over SSH) and calculates settings from what remains. When VMs are started or stopped, run the menu item "Recalculate settings for available resources" (or `sudo ./pg_server_setup.sh retune`): the script shows the difference and restarts PostgreSQL. Details: [“Virtual machines and available resources”](#virtual-machines-and-available-resources).
 
 </details>
 

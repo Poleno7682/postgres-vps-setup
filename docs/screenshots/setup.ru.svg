@@ -21,7 +21,7 @@
 <text x="186.0" y="251.7" fill="#89dceb" font-weight="bold" textLength="487.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">─────────────────────────────────────────────────────────╮</text>
 <text x="34.8" y="270.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="51.6" y="270.7" fill="#cdd6f4" opacity="0.6" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">CPU</text>
-<text x="186.0" y="270.7" fill="#cdd6f4" font-weight="bold" textLength="151.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 ядра / 2 потоков</text>
+<text x="186.0" y="270.7" fill="#cdd6f4" font-weight="bold" textLength="142.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 ядро / 2 потока</text>
 <text x="664.8" y="270.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="289.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="51.6" y="289.7" fill="#cdd6f4" opacity="0.6" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">RAM</text>

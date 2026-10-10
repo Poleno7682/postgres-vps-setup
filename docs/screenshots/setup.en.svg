@@ -21,7 +21,7 @@
 <text x="194.4" y="251.7" fill="#89dceb" font-weight="bold" textLength="478.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">────────────────────────────────────────────────────────╮</text>
 <text x="34.8" y="270.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="51.6" y="270.7" fill="#cdd6f4" opacity="0.6" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">CPU</text>
-<text x="186.0" y="270.7" fill="#cdd6f4" font-weight="bold" textLength="159.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 cores / 2 threads</text>
+<text x="186.0" y="270.7" fill="#cdd6f4" font-weight="bold" textLength="151.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">1 core / 2 threads</text>
 <text x="664.8" y="270.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="34.8" y="289.7" fill="#89dceb" font-weight="bold" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
 <text x="51.6" y="289.7" fill="#cdd6f4" opacity="0.6" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">RAM</text>
